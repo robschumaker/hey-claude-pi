@@ -12,7 +12,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from auth import load_env  # noqa: E402
+from voice.env import load_env  # noqa: E402
 
 load_env(os.environ.get("ENV_FILE", "/home/pi/household/.env"))
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")

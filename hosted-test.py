@@ -3,7 +3,7 @@ Deepgram speaks the reply and we time it. No microphone or speaker needed.
 Usage: ENV_FILE=/home/pi/household/.env venv-voice/bin/python voice/hosted-test.py"""
 import os, sys, time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from auth import load_env
+from voice.env import load_env
 load_env(os.environ.get("ENV_FILE", "/home/pi/household/.env"))
 import logging; logging.basicConfig(level=logging.INFO, format="%(message)s")
 from voice import audio, hosted
