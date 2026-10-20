@@ -20,6 +20,7 @@ log = logging.getLogger("voice")
 
 from voice import audio  # noqa: E402
 from voice.brain import Brain  # noqa: E402
+from voice import hosted  # noqa: E402
 
 
 def cfg(name: str, default: str) -> str:
@@ -34,8 +35,14 @@ def main() -> int:
     log.info("audio in=%d out=%d", inp, out)
     wake = audio.WakeWord(cfg("VOICE_WAKE_MODEL", "/home/pi/voice-models/hey_claude.onnx"),
                           float(cfg("VOICE_WAKE_THRESHOLD", "0.5")))
-    stt = audio.Transcriber(cfg("VOICE_WHISPER_MODEL", "base.en"))
-    tts = audio.Voice(cfg("VOICE_PIPER_VOICE", "/home/pi/voice-models/en_US-lessac-medium.onnx"), out)
+    if hosted.available():
+        log.info("speech via Deepgram")
+        stt = hosted.DeepgramTranscriber(hosted.available(), cfg("VOICE_DEEPGRAM_STT", "nova-3"))
+        tts = hosted.DeepgramVoice(hosted.available(), out, cfg("VOICE_DEEPGRAM_TTS", "aura-2-thalia-en"))
+    else:
+        log.info("speech local (whisper + Piper); slow on a Pi 4")
+        stt = audio.Transcriber(cfg("VOICE_WHISPER_MODEL", "base.en"))
+        tts = audio.Voice(cfg("VOICE_PIPER_VOICE", "/home/pi/voice-models/en_US-lessac-medium.onnx"), out)
     brain = Brain(cfg("STORE_DIR", "/home/pi/household"), cfg("VOICE_MODEL", "claude-opus-5-5"),
                   user=cfg("VOICE_USER", "voice"))
     follow_up = float(cfg("VOICE_FOLLOW_UP_SECONDS", "6"))
