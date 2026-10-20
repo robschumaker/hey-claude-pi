@@ -1,6 +1,8 @@
-"""The Claude side of the voice daemon when Claude runs on the owner's subscription: each spoken
-sentence goes to Claude Code's headless mode (claude -p) with the store attached as a stdio MCP
-server (voice/store_mcp.py). Follow-ups resume the same session for five minutes.
+"""The Claude side of the voice daemon when Claude runs on the owner's subscription: one Claude Code
+headless process (claude -p with streaming JSON in and out) stays alive with the store attached
+as a stdio MCP server (voice/store_mcp.py), so a turn costs only the model's time, not the
+seven seconds Claude Code takes to start on the Pi. The process is restarted after the
+conversation has been idle for session_seconds, so a fresh wake starts a fresh conversation.
 """
 from __future__ import annotations
 
@@ -8,6 +10,7 @@ import json
 import logging
 import os
 import subprocess
+import threading
 import time
 
 from voice.brain import SYSTEM
@@ -20,46 +23,88 @@ NOT_FOR_VOICE = "Bash,Edit,Write,Read,Glob,Grep,WebFetch,WebSearch,Agent,Noteboo
 class ClaudeCodeBrain:
     def __init__(self, claude_bin: str = os.path.expanduser("~/.local/bin/claude"),
                  model: str | None = None, workdir: str = os.path.expanduser("~/voice-work"),
-                 session_seconds: int = 300, timeout: int = 60):
+                 session_seconds: int = 300, timeout: int = 90):
         self.claude, self.model, self.workdir = claude_bin, model, workdir
         self.session_seconds, self.timeout = session_seconds, timeout
-        self.session_id: str | None = None
+        self.proc: subprocess.Popen | None = None
         self.last_turn = 0.0
+        self.lock = threading.Lock()
         os.makedirs(workdir, exist_ok=True)
+        self.start()
+        threading.Thread(target=self._idle_reaper, daemon=True).start()
 
-    def reply(self, heard: str) -> str:
-        now = time.monotonic()
-        if now - self.last_turn > self.session_seconds:
-            self.session_id = None
-        self.last_turn = now
-        cmd = [self.claude, "-p", heard, "--output-format", "json",
-               "--system-prompt", SYSTEM,
+    # ---- process -----------------------------------------------------------------------------
+    def start(self) -> None:
+        cmd = [self.claude, "-p", "--input-format", "stream-json", "--output-format", "stream-json",
+               "--verbose", "--system-prompt", SYSTEM,
                "--mcp-config", os.path.join(HERE, "mcp.json"), "--strict-mcp-config",
                "--allowedTools", "mcp__household__*", "--disallowedTools", NOT_FOR_VOICE,
                "--max-turns", "8"]
         if self.model:
             cmd += ["--model", self.model]
-        if self.session_id:
-            cmd += ["--resume", self.session_id]
-        t0 = time.monotonic()
-        try:
-            p = subprocess.run(cmd, cwd=self.workdir, capture_output=True, text=True, timeout=self.timeout)
-        except subprocess.TimeoutExpired:
-            log.error("claude -p timed out after %ss", self.timeout)
-            return "Sorry, that took too long."
-        if p.returncode != 0:
-            log.error("claude -p exit %d: %s", p.returncode, (p.stderr or p.stdout)[-400:])
+        self.proc = subprocess.Popen(cmd, cwd=self.workdir, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                     stderr=subprocess.DEVNULL, text=True, bufsize=1)
+        log.info("claude code started pid %d (model %s)", self.proc.pid, self.model or "default")
+        threading.Thread(target=self._warm_up, daemon=True).start()
+
+    def _warm_up(self) -> None:
+        """Claude Code launches the store MCP server on the first turn, which costs about seven
+        seconds on the Pi; spend them now rather than on the first real question."""
+        with self.lock:
+            t = time.monotonic()
+            self._turn("Call list_topics, then reply with the single word ready.", quiet=True)
+            log.info("warm-up done in %.1fs", time.monotonic() - t)
+
+    def stop(self) -> None:
+        if self.proc and self.proc.poll() is None:
+            try:
+                self.proc.stdin.close()
+                self.proc.wait(timeout=5)
+            except Exception:
+                self.proc.kill()
+        self.proc = None
+
+    def _idle_reaper(self) -> None:
+        while True:
+            time.sleep(15)
+            with self.lock:
+                if self.proc and self.last_turn and time.monotonic() - self.last_turn > self.session_seconds:
+                    log.info("conversation idle; starting a fresh one")
+                    self.stop(); self.start(); self.last_turn = 0.0
+
+    # ---- one turn ----------------------------------------------------------------------------
+    def reply(self, heard: str) -> str:
+        with self.lock:
+            if self.proc is None or self.proc.poll() is not None:
+                self.start()
+            return self._turn(heard)
+
+    def _turn(self, heard: str, quiet: bool = False) -> str:
+        if True:
+            self.last_turn = time.monotonic()
+            t0 = time.monotonic()
+            try:
+                self.proc.stdin.write(json.dumps({"type": "user", "message": {"role": "user", "content": heard}}) + "\n")
+                self.proc.stdin.flush()
+                deadline = t0 + self.timeout
+                while time.monotonic() < deadline:
+                    line = self.proc.stdout.readline()
+                    if not line:
+                        raise RuntimeError("claude code exited")
+                    try:
+                        ev = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if ev.get("type") == "result":
+                        text = (ev.get("result") or "").strip()
+                        if not quiet:
+                            log.info("claude code %.1fs (%s): %r", time.monotonic() - t0, ev.get("subtype"), text)
+                        if ev.get("is_error") or ev.get("subtype") != "success":
+                            return text or "Sorry, something went wrong."
+                        self.last_turn = time.monotonic()
+                        return text or "Done."
+                log.error("claude code: no result within %ss", self.timeout)
+            except Exception:
+                log.exception("claude code turn failed")
+            self.stop()
             return "Sorry, I couldn't reach my brain just now."
-        try:
-            out = json.loads(p.stdout)
-        except json.JSONDecodeError:
-            log.error("claude -p gave non-JSON: %r", p.stdout[-400:])
-            return "Sorry, something went wrong."
-        self.session_id = out.get("session_id") or self.session_id
-        text = (out.get("result") or "").strip()
-        log.info("claude code %.1fs (%s turns, $%.4f): %r", time.monotonic() - t0,
-                 out.get("num_turns"), out.get("total_cost_usd") or 0, text)
-        if out.get("is_error"):
-            log.error("claude -p is_error: %r", text)
-            return "Sorry, something went wrong."
-        return text or "Done."
