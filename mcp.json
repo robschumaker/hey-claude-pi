@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "household": {
+      "command": "/home/pi/household-mcp/venv/bin/python",
+      "args": ["/home/pi/household-mcp/voice/store_mcp.py"],
+      "env": {"STORE_DIR": "/home/pi/household"}
+    }
+  }
+}
