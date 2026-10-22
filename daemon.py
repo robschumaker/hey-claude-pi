@@ -22,6 +22,7 @@ from voice import audio  # noqa: E402
 from voice.brain import Brain  # noqa: E402
 from voice.brain_cc import ClaudeCodeBrain  # noqa: E402
 from voice import hosted  # noqa: E402
+from voice import cast as cast_out  # noqa: E402
 
 
 def cfg(name: str, default: str) -> str:
@@ -48,6 +49,12 @@ def main() -> int:
     else:
         log.info("brain: Claude Code on the subscription")
         brain = ClaudeCodeBrain(model=cfg("VOICE_CC_MODEL", "") or None)
+    output = cfg("VOICE_OUTPUT", "respeaker")
+    if output.startswith("cast:"):
+        # Current kitchen setup: reply through a Google Cast speaker. No echo cancellation that way,
+        # so we simply do not listen while it talks. Long-term: a speaker on the ReSpeaker's amplifier.
+        tts = cast_out.CastVoice(tts, output.split(":", 1)[1])
+        log.info("output: cast to %s", output.split(":", 1)[1])
     follow_up = float(cfg("VOICE_FOLLOW_UP_SECONDS", "6"))
     ears = audio.Ears(inp)
     log.info("listening for %s", wake.name)
@@ -58,7 +65,8 @@ def main() -> int:
                 continue
             log.info("wake %.2f", score)
             wake.reset()
-            audio.chime(out)
+            if not output.startswith("cast:"):
+                audio.chime(out)
             timeout = 6.0
             while True:                                   # one exchange, then follow-ups
                 clip = audio.record_utterance(ears, start_timeout=timeout)
