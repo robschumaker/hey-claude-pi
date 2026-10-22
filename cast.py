@@ -30,6 +30,10 @@ def lan_ip(probe: str = "192.0.2.1") -> str:
         s.close()
 
 
+class _Server(socketserver.TCPServer):
+    allow_reuse_address = True
+
+
 class _Quiet(http.server.SimpleHTTPRequestHandler):
     def log_message(self, *a):
         pass
@@ -44,7 +48,7 @@ class CastVoice:
         self.dir = tempfile.mkdtemp(prefix="voice-cast-")
         self.ip = lan_ip()
         handler = lambda *a, **k: _Quiet(*a, directory=self.dir, **k)
-        self.httpd = socketserver.TCPServer((self.ip, port), handler)   # LAN address only, never 0.0.0.0
+        self.httpd = _Server((self.ip, port), handler)   # LAN address only, never 0.0.0.0
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
         self.port = port
         casts, self.browser = pychromecast.get_listed_chromecasts(friendly_names=[device_name], timeout=15)
