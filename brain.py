@@ -43,8 +43,8 @@ TOOLS = [
      "input_schema": {"type": "object", "properties": {"list": {"type": "string"}, "item": {"type": "string"}},
                       "required": ["list", "item"], "additionalProperties": False}, "strict": True},
     {"name": "leave_note", "description": "Leave a note for another assistant: claude is the owner's claude.ai Claude (trips, itineraries, plans), chatgpt is the partner's assistant, claude-code is the one that maintains the house computers.",
-     "input_schema": {"type": "object", "properties": {"for_assistant": {"type": "string", "enum": ["claude", "chatgpt", "claude-code"]}, "text": {"type": "string"}},
-                      "required": ["for_assistant", "text"], "additionalProperties": False}, "strict": True},
+     "input_schema": {"type": "object", "properties": {"for_assistant": {"type": "string", "enum": ["claude", "chatgpt", "claude-code"]}, "text": {"type": "string"}, "topic": {"type": ["string", "null"]}},
+                      "required": ["for_assistant", "text", "topic"], "additionalProperties": False}, "strict": True},
 ]
 
 
@@ -74,7 +74,7 @@ class Brain:
         if name == "remove_item":
             return s.remove_item(args["list"], args["item"], by)
         if name == "leave_note":
-            return s.leave_note(args["for_assistant"], args["text"], self.user, self.assistant)
+            return s.leave_note(args["for_assistant"], args["text"], self.user, self.assistant, args.get("topic"))
         raise StoreError(f"unknown tool {name}")
 
     # ---- one turn --------------------------------------------------------------------------

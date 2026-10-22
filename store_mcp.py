@@ -52,9 +52,9 @@ def remove_item(item: str, list: str = "shopping") -> dict:
 
 
 @mcp.tool
-def leave_note(for_assistant: str, text: str) -> dict:
-    """Leave a note for another assistant: claude (the owner's claude.ai Claude: trips, plans), chatgpt (the partner's), claude-code (maintains the house computers)."""
-    return store.leave_note(for_assistant, text, USER, ASSISTANT)
+def leave_note(for_assistant: str, text: str, topic: str | None = None) -> dict:
+    """Leave a note for another assistant: claude (the owner's claude.ai Claude: trips, plans), chatgpt (the partner's), claude-code (maintains the house computers). Tag it with a topic when it is about one."""
+    return store.leave_note(for_assistant, text, USER, ASSISTANT, topic)
 
 
 if __name__ == "__main__":
