@@ -61,19 +61,20 @@ def main() -> int:
     follow_up = float(cfg("VOICE_FOLLOW_UP_SECONDS", "6"))
     channel = int(cfg("VOICE_CHANNEL", "0"))
     ears = audio.Ears(inp, channel=channel)
-    diag = cfg("VOICE_DIAG", "0") == "1"           # score the other channel too, log near misses
-    other = audio.WakeWord(wake_path, wake.threshold) if diag else None
-    log.info("listening for %s on channel %d%s", wake.name, channel, " (diagnostic: scoring both channels)" if diag else "")
+    diag = cfg("VOICE_DIAG", "0") == "1"           # log near misses
+    other = audio.WakeWord(wake_path, wake.threshold)  # both channels are scored; the louder one wins
+    log.info("listening for %s on both channels (recording follows the one that wakes; default %d)", wake.name, channel)
     try:
         while True:
             score = wake.heard(ears.frame())
-            if diag:
-                o = other.heard(ears.last[:, 1 - channel])
-                if max(score, o) >= 0.1:
-                    log.info("scores ch%d=%.2f ch%d=%.2f", channel, score, 1 - channel, o)
-            if score < wake.threshold:
+            o = other.heard(ears.last[:, 1 - channel])
+            if diag and max(score, o) >= 0.1:
+                log.info("scores ch%d=%.2f ch%d=%.2f", channel, score, 1 - channel, o)
+            if max(score, o) < wake.threshold:
                 continue
-            log.info("wake %.2f", score)
+            ears.channel = channel if score >= o else 1 - channel
+            log.info("wake %.2f on channel %d", max(score, o), ears.channel)
+            other.reset()
             wake.reset()
             scr.wake(); web.set_state("quiet")
             if not output.startswith("cast:"):

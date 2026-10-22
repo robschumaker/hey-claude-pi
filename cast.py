@@ -37,24 +37,28 @@ class CastVoice:
     def say(self, text: str) -> None:
         t = time.monotonic()
         audio = self.renderer.render(text)
+        t_render = time.monotonic() - t
         name = f"{uuid.uuid4().hex}.wav"
         fp = os.path.join(web.MEDIA_DIR, name)
         with wave.open(fp, "wb") as w:
             w.setnchannels(1); w.setsampwidth(2); w.setframerate(RATE); w.writeframes(audio.astype(np.int16).tobytes())
         seconds = len(audio) / RATE
         mc = self.cast.media_controller
+        t1 = time.monotonic()
         mc.play_media(f"http://{self.ip}:{self.port}/media/{name}", "audio/wav")
         mc.block_until_active(timeout=10)
-        deadline = time.monotonic() + seconds + 8
-        started = False
-        while time.monotonic() < deadline:
+        started_at = None
+        while True:                                   # wait for playback to start, then for its length
             st = mc.status.player_state
-            if st in ("PLAYING", "BUFFERING"):
-                started = True
-            elif started and st in ("IDLE", "UNKNOWN"):
+            if started_at is None and st in ("PLAYING", "BUFFERING"):
+                started_at = time.monotonic()
+            if started_at is not None and (st in ("IDLE", "UNKNOWN") or time.monotonic() - started_at >= seconds + 0.5):
                 break
-            time.sleep(0.25)
-        log.info("cast said %d chars (%.1fs audio) in %.1fs", len(text), seconds, time.monotonic() - t)
+            if started_at is None and time.monotonic() - t1 > 10:
+                break
+            time.sleep(0.1)
+        t_start = (started_at or time.monotonic()) - t1
+        log.info("cast said %d chars: render %.1fs, start %.1fs, audio %.1fs, total %.1fs", len(text), t_render, t_start, seconds, time.monotonic() - t)
         try:
             os.remove(fp)
         except OSError:
