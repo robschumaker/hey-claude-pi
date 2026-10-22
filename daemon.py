@@ -76,18 +76,22 @@ def main() -> int:
                 audio.chime(out)
             timeout = 6.0
             while True:                                   # one exchange, then follow-ups
-                clip = audio.record_utterance(ears, start_timeout=timeout)
-                if clip is None:
-                    break
-                heard = stt.text(clip)
-                if not heard:
-                    break
                 try:
-                    answer = brain.reply(heard)
-                except Exception as e:                    # network, API, anything: say so, keep listening
-                    log.exception("claude failed")
-                    answer = "Sorry, I couldn't reach my brain just now."
-                tts.say(answer)
+                    clip = audio.record_utterance(ears, start_timeout=timeout)
+                    if clip is None:
+                        break
+                    heard = stt.text(clip)
+                    if not heard:
+                        break
+                    try:
+                        answer = brain.reply(heard)
+                    except Exception:                     # Claude failed: say so, keep going
+                        log.exception("claude failed")
+                        answer = "Sorry, I couldn't reach my brain just now."
+                    tts.say(answer)
+                except Exception:                         # recognition or speech failed (network, cast): back to listening
+                    log.exception("exchange failed; listening again")
+                    break
                 wake.reset()
                 timeout = follow_up
     finally:

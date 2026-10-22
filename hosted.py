@@ -33,7 +33,7 @@ class DeepgramTranscriber:
         url = f"https://api.deepgram.com/v1/listen?model={self.model}&smart_format=true&language=en"
         req = urllib.request.Request(url, data=_wav_bytes(audio), method="POST",
                                      headers={"Authorization": f"Token {self.key}", "Content-Type": "audio/wav"})
-        with urllib.request.urlopen(req, timeout=15) as r:
+        with urllib.request.urlopen(req, timeout=20) as r:
             body = json.load(r)
         out = body["results"]["channels"][0]["alternatives"][0]["transcript"].strip()
         log.info("deepgram stt %.1fs: %r", time.monotonic() - t, out)
@@ -48,7 +48,7 @@ class DeepgramVoice:
         url = f"https://api.deepgram.com/v1/speak?model={self.model}&encoding=linear16&sample_rate={RATE}&container=none"
         req = urllib.request.Request(url, data=json.dumps({"text": text}).encode(), method="POST",
                                      headers={"Authorization": f"Token {self.key}", "Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=15) as r:
+        with urllib.request.urlopen(req, timeout=20) as r:
             raw = r.read()
         return np.frombuffer(raw, dtype=np.int16)
 
