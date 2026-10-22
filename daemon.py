@@ -32,8 +32,8 @@ def cfg(name: str, default: str) -> str:
 def main() -> int:
     inp, out = audio.find_device(cfg("VOICE_DEVICE", "XVF3800"))
     log.info("audio in=%d out=%d", inp, out)
-    wake = audio.WakeWord(cfg("VOICE_WAKE_MODEL", "/home/pi/voice-models/hey_claude.onnx"),
-                          float(cfg("VOICE_WAKE_THRESHOLD", "0.5")))
+    wake_path = cfg("VOICE_WAKE_MODEL", "/home/pi/voice-models/hey_claude.onnx")
+    wake = audio.WakeWord(wake_path, float(cfg("VOICE_WAKE_THRESHOLD", "0.5")))
     if hosted.available():
         log.info("speech via Deepgram")
         stt = hosted.DeepgramTranscriber(hosted.available(), cfg("VOICE_DEEPGRAM_STT", "nova-3"))
@@ -56,11 +56,18 @@ def main() -> int:
         tts = cast_out.CastVoice(tts, output.split(":", 1)[1])
         log.info("output: cast to %s", output.split(":", 1)[1])
     follow_up = float(cfg("VOICE_FOLLOW_UP_SECONDS", "6"))
-    ears = audio.Ears(inp)
-    log.info("listening for %s", wake.name)
+    channel = int(cfg("VOICE_CHANNEL", "0"))
+    ears = audio.Ears(inp, channel=channel)
+    diag = cfg("VOICE_DIAG", "0") == "1"           # score the other channel too, log near misses
+    other = audio.WakeWord(wake_path, wake.threshold) if diag else None
+    log.info("listening for %s on channel %d%s", wake.name, channel, " (diagnostic: scoring both channels)" if diag else "")
     try:
         while True:
             score = wake.heard(ears.frame())
+            if diag:
+                o = other.heard(ears.last[:, 1 - channel])
+                if max(score, o) >= 0.1:
+                    log.info("scores ch%d=%.2f ch%d=%.2f", channel, score, 1 - channel, o)
             if score < wake.threshold:
                 continue
             log.info("wake %.2f", score)

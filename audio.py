@@ -35,17 +35,20 @@ def find_device(name_part: str) -> tuple[int, int]:
 class Ears:
     """One always-open input stream; frames are pulled 80 ms at a time."""
 
-    def __init__(self, device: int):
+    def __init__(self, device: int, channel: int = 0, channels: int = 2):
         import sounddevice as sd
-        self.stream = sd.InputStream(device=device, samplerate=RATE, channels=1, dtype="int16",
+        self.channel = channel
+        self.stream = sd.InputStream(device=device, samplerate=RATE, channels=channels, dtype="int16",
                                      blocksize=FRAME)
         self.stream.start()
+        self.last = None
 
     def frame(self) -> np.ndarray:
         data, overflowed = self.stream.read(FRAME)
         if overflowed:
             log.warning("input overflow")
-        return data[:, 0]
+        self.last = data                       # all channels, for diagnostics
+        return data[:, self.channel]
 
     def close(self):
         self.stream.stop(); self.stream.close()
