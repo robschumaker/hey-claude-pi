@@ -10,9 +10,10 @@
     "#claude-voice.on{display:flex}" +
     "#claude-voice img{width:34vmin;height:34vmin;filter:drop-shadow(0 0 24px rgba(217,119,87,.55));transform:scale(1)}" +
     "#claude-voice.hearing img{animation:claude-breathe 1.1s ease-in-out infinite}" +
-    "#claude-voice.thinking img{opacity:.85}" +
+    "#claude-voice.thinking img{animation:claude-spin 2.4s linear infinite}" +
     "#claude-voice.speaking img{filter:drop-shadow(0 0 40px rgba(217,119,87,.9))}" +
-    "@keyframes claude-breathe{0%,100%{transform:scale(1)}50%{transform:scale(1.18)}}";
+    "@keyframes claude-breathe{0%,100%{transform:scale(1)}50%{transform:scale(1.18)}}" +
+    "@keyframes claude-spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}";
   document.head.appendChild(css);
   var box = document.createElement("div");
   box.id = "claude-voice";
