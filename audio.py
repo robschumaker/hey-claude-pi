@@ -69,7 +69,7 @@ class WakeWord:
 
 
 def record_utterance(ears: Ears, max_seconds: float = 12.0, start_timeout: float = 6.0,
-                     silence_after: float = 0.9, threshold_rms: float = 300.0) -> np.ndarray | None:
+                     silence_after: float = 0.9, threshold_rms: float = 300.0, on_speech=None) -> np.ndarray | None:
     """Record until the speaker stops. Energy-based end-pointing: wait up to start_timeout for
     speech, then stop after silence_after seconds of quiet. Returns int16 audio or None if nothing."""
     frames, started, quiet, t0 = [], False, 0.0, time.monotonic()
@@ -80,6 +80,8 @@ def record_utterance(ears: Ears, max_seconds: float = 12.0, start_timeout: float
         noise = rms if noise is None else min(noise * 1.02, 0.9 * noise + 0.1 * rms)
         gate = max(threshold_rms, noise * 3)
         elapsed = time.monotonic() - t0
+        if on_speech is not None:
+            on_speech(rms > gate)
         if not started:
             frames.append(f)
             if len(frames) > 6:            # keep ~0.5 s of pre-roll

@@ -23,6 +23,7 @@ from voice.brain import Brain  # noqa: E402
 from voice.brain_cc import ClaudeCodeBrain  # noqa: E402
 from voice import hosted  # noqa: E402
 from voice import cast as cast_out  # noqa: E402
+from voice import web, screen as screen_mod  # noqa: E402
 
 
 def cfg(name: str, default: str) -> str:
@@ -49,6 +50,8 @@ def main() -> int:
     else:
         log.info("brain: Claude Code on the subscription")
         brain = ClaudeCodeBrain(model=cfg("VOICE_CC_MODEL", "") or None)
+    web.start()                                        # state for the dashboard overlay, media for casting
+    scr = screen_mod.Screen()
     output = cfg("VOICE_OUTPUT", "respeaker")
     if output.startswith("cast:"):
         # Current kitchen setup: reply through a Google Cast speaker. No echo cancellation that way,
@@ -72,14 +75,17 @@ def main() -> int:
                 continue
             log.info("wake %.2f", score)
             wake.reset()
+            scr.wake(); web.set_state("quiet")
             if not output.startswith("cast:"):
                 audio.chime(out)
             timeout = 6.0
             while True:                                   # one exchange, then follow-ups
                 try:
-                    clip = audio.record_utterance(ears, start_timeout=timeout)
+                    clip = audio.record_utterance(ears, start_timeout=timeout,
+                                                  on_speech=lambda sp: web.set_state("hearing" if sp else "quiet"))
                     if clip is None:
                         break
+                    web.set_state("thinking")
                     heard = stt.text(clip)
                     if not heard:
                         break
@@ -88,12 +94,15 @@ def main() -> int:
                     except Exception:                     # Claude failed: say so, keep going
                         log.exception("claude failed")
                         answer = "Sorry, I couldn't reach my brain just now."
+                    web.set_state("speaking")
                     tts.say(answer)
+                    web.set_state("quiet")
                 except Exception:                         # recognition or speech failed (network, cast): back to listening
                     log.exception("exchange failed; listening again")
                     break
                 wake.reset()
                 timeout = follow_up
+            web.set_state("idle"); scr.restore()
     finally:
         ears.close()
     return 0

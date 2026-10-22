@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+  <!-- a starburst in Claude's terracotta; an approximation of the mark, not the trademark file -->
+  <g fill="#D97757" transform="translate(50 50)">
+    <circle r="9"/>
+    <g id="r"><rect x="-4.5" y="-46" width="9" height="40" rx="4.5"/></g>
+    <use href="#r" transform="rotate(30)"/><use href="#r" transform="rotate(60)"/><use href="#r" transform="rotate(90)"/>
+    <use href="#r" transform="rotate(120)"/><use href="#r" transform="rotate(150)"/><use href="#r" transform="rotate(180)"/>
+    <use href="#r" transform="rotate(210)"/><use href="#r" transform="rotate(240)"/><use href="#r" transform="rotate(270)"/>
+    <use href="#r" transform="rotate(300)"/><use href="#r" transform="rotate(330)"/>
+  </g>
+</svg>
