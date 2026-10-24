@@ -11,6 +11,8 @@ import os
 import sys
 import time
 
+import numpy as np
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from voice.env import load_env  # noqa: E402
 
@@ -65,6 +67,7 @@ def main() -> int:
     other = audio.WakeWord(wake_path, wake.threshold)  # both channels are scored; the louder one wins
     log.info("listening for %s on both channels (recording follows the one that wakes; default %d)", wake.name, channel)
     frames, peak0, peak1 = 0, 0, 0
+    ambient = [200.0, 200.0]                               # running quiet-room level per channel, for the recorder's gate
     stall = {"frames": 0}
 
     def _stall_watch():                                   # no audio for 20 s means the array wedged: exit, systemd restarts us via mic-check
@@ -83,6 +86,9 @@ def main() -> int:
             score = wake.heard(ears.frame())
             o = other.heard(ears.last[:, 1 - channel])
             frames += 1; stall["frames"] = frames
+            for ch in (0, 1):
+                r = float(np.sqrt(np.mean(ears.last[:, ch].astype(np.float32) ** 2)))
+                ambient[ch] = min(ambient[ch] * 1.01, 0.95 * ambient[ch] + 0.05 * r)   # tracks down fast, up slowly
             peak0 = max(peak0, int(abs(ears.last[:, 0].astype(int)).max())); peak1 = max(peak1, int(abs(ears.last[:, 1].astype(int)).max()))
             if frames % 375 == 0:                                   # every 30 s: proof of life for the microphone
                 log.info("mic 30s peak ch0=%d ch1=%d (silence is <100, speech nearby >2000)", peak0, peak1)
@@ -101,7 +107,7 @@ def main() -> int:
             timeout = 6.0
             while True:                                   # one exchange, then follow-ups
                 try:
-                    clip = audio.record_utterance(ears, start_timeout=timeout,
+                    clip = audio.record_utterance(ears, start_timeout=timeout, ambient_rms=ambient[ears.channel],
                                                   on_speech=lambda sp: web.set_state("hearing" if sp else "quiet"))
                     if clip is None:
                         break

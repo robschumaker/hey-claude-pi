@@ -69,32 +69,37 @@ class WakeWord:
 
 
 def record_utterance(ears: Ears, max_seconds: float = 12.0, start_timeout: float = 6.0,
-                     silence_after: float = 0.9, threshold_rms: float = 300.0, on_speech=None) -> np.ndarray | None:
-    """Record until the speaker stops. Energy-based end-pointing: wait up to start_timeout for
-    speech, then stop after silence_after seconds of quiet. Returns int16 audio or None if nothing."""
+                     silence_after: float = 0.9, threshold_rms: float = 300.0, on_speech=None,
+                     ambient_rms: float | None = None) -> np.ndarray | None:
+    """Record until the speaker stops. The speech gate comes from the ambient level measured while
+    idle (ambient_rms), never from the first frames after the wake word, which are already speech.
+    Waits up to start_timeout for speech, then stops after silence_after seconds of quiet."""
+    gate = max(threshold_rms, (ambient_rms or 0.0) * 2.5)
     frames, started, quiet, t0 = [], False, 0.0, time.monotonic()
-    noise = None
+    peak = 0.0
     while True:
         f = ears.frame()
         rms = float(np.sqrt(np.mean(f.astype(np.float32) ** 2)))
-        noise = rms if noise is None else min(noise * 1.02, 0.9 * noise + 0.1 * rms)
-        gate = max(threshold_rms, noise * 3)
+        peak = max(peak, rms)
         elapsed = time.monotonic() - t0
+        speaking = rms > gate
         if on_speech is not None:
-            on_speech(rms > gate)
+            on_speech(speaking)
         if not started:
             frames.append(f)
             if len(frames) > 6:            # keep ~0.5 s of pre-roll
                 frames.pop(0)
-            if rms > gate:
+            if speaking:
                 started = True
             elif elapsed > start_timeout:
+                log.info("no speech within %.0fs (gate %.0f, loudest frame %.0f)", start_timeout, gate, peak)
                 return None
             continue
         frames.append(f)
-        quiet = quiet + FRAME / RATE if rms < gate else 0.0
+        quiet = quiet + FRAME / RATE if not speaking else 0.0
         if quiet >= silence_after or elapsed > max_seconds:
             audio = np.concatenate(frames)
+            log.info("recorded %.1fs (gate %.0f, peak %.0f)", len(audio) / RATE, gate, peak)
             return audio if len(audio) > RATE * 0.4 else None
 
 
