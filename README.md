@@ -25,7 +25,7 @@ Everything lives in one process (`daemon.py`) and one systemd unit. The daemon l
 
 - Raspberry Pi 4 (a Pi 5 would be more comfortable; local Whisper and Piper were tried on the Pi 4 and are too slow to talk to, which is why speech is hosted and only the wake word is local).
 - Seeed ReSpeaker XVF3800 USB 4-mic array. It does echo cancellation in firmware when the speaker is on its own amplifier output, so the assistant can hear over its own voice. Channel 1 of its USB stream scores the wake word far better than channel 0; the daemon scores both and records from the one that woke.
-- A speaker on the array's JST amplifier output or 3.5 mm jack. Until one is attached, replies can be cast to a Google Nest display (`VOICE_OUTPUT=cast:<device name>`), at the cost of a few seconds and not listening while it talks.
+- A speaker on the array's JST amplifier output or 3.5 mm jack (`VOICE_OUTPUT=respeaker`, the default). Without one, replies can be cast to a Google Nest display (`VOICE_OUTPUT=cast:<device name>`), at the cost of a few seconds, no wake chime and not listening while it talks.
 - Optional: a display running a kiosk web page, which gets the state overlay by one script tag.
 
 ## Setup
@@ -37,6 +37,13 @@ Everything lives in one process (`daemon.py`) and one systemd unit. The daemon l
 5. A Deepgram API key for speech in both directions.
 6. Copy `.env.example` to your env file, set `ENV_FILE` in the unit, `sudo install -m 644 systemd/household-voice.service /etc/systemd/system/`, `sudo systemctl enable --now household-voice.service`.
 7. Kiosk overlay: add the loader from `web/README-overlay.md` to the kiosk page; it retries until the daemon's web server is up, since the kiosk starts first at boot.
+
+## Sound
+
+- On the wake word the speaker plays a short rising two-tone and recording starts the moment it ends. That is the cue to talk.
+- The service sets the array's amplifier to full volume at start (`amixer -D hw:Array sset PCM 100%`). On the XVF3800 the control called `Headset` is the microphone gain, not the speaker; leave it alone.
+- Deepgram's renders peak at about a third of full scale, so replies are normalised before playback. `VOICE_GAIN` in `.env` scales further.
+- Voice: `VOICE_DEEPGRAM_TTS`. `voice/audition.py` fetches Deepgram's current Aura list (`--list`) and speaks a sample from each name you give it through the speaker, so you can choose by ear.
 
 ## Tools
 
