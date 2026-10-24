@@ -68,33 +68,71 @@ class WakeWord:
         self.model.reset()
 
 
+class SpeechDetector:
+    """Silero VAD (shipped with openWakeWord): speech probability per 80 ms frame, independent of
+    how loud the speaker is. Falls back to an energy gate if the model can't load."""
+
+    def __init__(self, threshold: float = 0.5):
+        self.threshold = threshold
+        try:
+            from openwakeword.vad import VAD
+            self.vad = VAD()
+        except Exception:
+            log.exception("silero VAD unavailable; using the energy gate")
+            self.vad = None
+
+    def reset(self):
+        if self.vad is not None:
+            self.vad.reset_states()
+
+    def speaking(self, frame: np.ndarray, rms: float, gate: float) -> tuple[bool, float]:
+        if self.vad is None:
+            return rms > gate, rms
+        p = float(self.vad.predict(frame, frame_size=640))
+        return p >= self.threshold, p
+
+
+_detector: SpeechDetector | None = None
+
+
 def record_utterance(ears: Ears, max_seconds: float = 12.0, start_timeout: float = 6.0,
-                     silence_after: float = 0.9, threshold_rms: float = 300.0, on_speech=None) -> np.ndarray | None:
-    """Record until the speaker stops. Energy-based end-pointing: wait up to start_timeout for
-    speech, then stop after silence_after seconds of quiet. Returns int16 audio or None if nothing."""
+                     silence_after: float = 1.0, threshold_rms: float = 300.0, on_speech=None,
+                     ambient_rms: float | None = None) -> np.ndarray | None:
+    """Record until the speaker stops. Speech is detected by Silero VAD, so a quiet voice across the
+    room counts; the energy gate (ambient-based) is only the fallback. Waits up to start_timeout for
+    speech, then stops after silence_after seconds without it. Returns int16 audio or None."""
+    global _detector
+    if _detector is None:
+        _detector = SpeechDetector(float(os.environ.get("VOICE_VAD_THRESHOLD", "0.5")))
+    det = _detector
+    det.reset()
+    gate = max(threshold_rms, (ambient_rms or 0.0) * 2.5)
     frames, started, quiet, t0 = [], False, 0.0, time.monotonic()
-    noise = None
+    peak, best = 0.0, 0.0
     while True:
         f = ears.frame()
         rms = float(np.sqrt(np.mean(f.astype(np.float32) ** 2)))
-        noise = rms if noise is None else min(noise * 1.02, 0.9 * noise + 0.1 * rms)
-        gate = max(threshold_rms, noise * 3)
+        peak = max(peak, rms)
+        speaking, score = det.speaking(f, rms, gate)
+        best = max(best, score)
         elapsed = time.monotonic() - t0
         if on_speech is not None:
-            on_speech(rms > gate)
+            on_speech(speaking)
         if not started:
             frames.append(f)
             if len(frames) > 6:            # keep ~0.5 s of pre-roll
                 frames.pop(0)
-            if rms > gate:
+            if speaking:
                 started = True
             elif elapsed > start_timeout:
+                log.info("no speech within %.0fs (best vad %.2f, loudest frame rms %.0f)", start_timeout, best, peak)
                 return None
             continue
         frames.append(f)
-        quiet = quiet + FRAME / RATE if rms < gate else 0.0
+        quiet = quiet + FRAME / RATE if not speaking else 0.0
         if quiet >= silence_after or elapsed > max_seconds:
             audio = np.concatenate(frames)
+            log.info("recorded %.1fs in %.1fs (peak rms %.0f)", len(audio) / RATE, elapsed, peak)
             return audio if len(audio) > RATE * 0.4 else None
 
 
