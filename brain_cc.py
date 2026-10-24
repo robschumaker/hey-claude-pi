@@ -17,7 +17,7 @@ from voice.brain import SYSTEM
 
 log = logging.getLogger("voice.brain_cc")
 HERE = os.path.dirname(os.path.abspath(__file__))
-NOT_FOR_VOICE = "Bash,Edit,Write,Read,Glob,Grep,WebFetch,WebSearch,Agent,NotebookEdit,TodoWrite,Skill"
+NOT_FOR_VOICE = "Bash,Edit,Write,Read,Glob,Grep,WebFetch,Agent,NotebookEdit,TodoWrite,Skill"
 
 
 class ClaudeCodeBrain:
@@ -38,7 +38,7 @@ class ClaudeCodeBrain:
         cmd = [self.claude, "-p", "--input-format", "stream-json", "--output-format", "stream-json",
                "--verbose", "--system-prompt", SYSTEM,
                "--mcp-config", os.path.join(HERE, "mcp.json"), "--strict-mcp-config",
-               "--allowedTools", "mcp__household__*", "--disallowedTools", NOT_FOR_VOICE,
+               "--allowedTools", "mcp__household__*,WebSearch", "--disallowedTools", NOT_FOR_VOICE,
                "--max-turns", "8"]
         if self.model:
             cmd += ["--model", self.model]

@@ -57,5 +57,38 @@ def leave_note(for_assistant: str, text: str, topic: str | None = None) -> dict:
     return store.leave_note(for_assistant, text, USER, ASSISTANT, topic)
 
 
+WMO = {0: "clear", 1: "mostly clear", 2: "partly cloudy", 3: "overcast", 45: "fog", 48: "freezing fog",
+       51: "light drizzle", 53: "drizzle", 55: "heavy drizzle", 56: "freezing drizzle", 57: "freezing drizzle",
+       61: "light rain", 63: "rain", 65: "heavy rain", 66: "freezing rain", 67: "freezing rain",
+       71: "light snow", 73: "snow", 75: "heavy snow", 77: "snow grains", 80: "rain showers", 81: "rain showers",
+       82: "violent rain showers", 85: "snow showers", 86: "heavy snow showers", 95: "thunderstorms",
+       96: "thunderstorms with hail", 99: "thunderstorms with heavy hail"}
+
+
+@mcp.tool
+def weather(days: int = 3) -> dict:
+    """Current conditions and the forecast at the house (Open-Meteo, no key). days: how many days ahead to
+    include, 1 to 7. Temperatures are Fahrenheit, wind mph, times local. Use for any weather question."""
+    import json
+    import urllib.request
+    lat = os.environ.get("VOICE_HOME_LAT", "32.78"); lon = os.environ.get("VOICE_HOME_LON", "-96.81")
+    url = ("https://api.open-meteo.com/v1/forecast?latitude=%s&longitude=%s&timezone=auto"
+           "&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch&forecast_days=%d"
+           "&current=temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,weather_code,wind_speed_10m"
+           "&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,precipitation_sum,sunrise,sunset"
+           % (lat, lon, max(1, min(int(days), 7))))
+    with urllib.request.urlopen(url, timeout=8) as r:
+        d = json.load(r)
+    c, dy = d["current"], d["daily"]
+    return {"place": os.environ.get("VOICE_HOME_NAME", "home"), "as_of": c["time"],
+            "now": {"temp_f": round(c["temperature_2m"]), "feels_like_f": round(c["apparent_temperature"]),
+                    "humidity_pct": c["relative_humidity_2m"], "sky": WMO.get(c["weather_code"], "unknown"),
+                    "wind_mph": round(c["wind_speed_10m"]), "precip_in": c["precipitation"]},
+            "days": [{"date": dy["time"][i], "sky": WMO.get(dy["weather_code"][i], "unknown"),
+                      "high_f": round(dy["temperature_2m_max"][i]), "low_f": round(dy["temperature_2m_min"][i]),
+                      "rain_chance_pct": dy["precipitation_probability_max"][i], "precip_in": dy["precipitation_sum"][i],
+                      "sunrise": dy["sunrise"][i][-5:], "sunset": dy["sunset"][i][-5:]} for i in range(len(dy["time"]))]}
+
+
 if __name__ == "__main__":
     mcp.run(show_banner=False)
