@@ -64,10 +64,16 @@ def main() -> int:
     diag = cfg("VOICE_DIAG", "0") == "1"           # log near misses
     other = audio.WakeWord(wake_path, wake.threshold)  # both channels are scored; the louder one wins
     log.info("listening for %s on both channels (recording follows the one that wakes; default %d)", wake.name, channel)
+    frames, peak0, peak1 = 0, 0, 0
     try:
         while True:
             score = wake.heard(ears.frame())
             o = other.heard(ears.last[:, 1 - channel])
+            frames += 1
+            peak0 = max(peak0, int(abs(ears.last[:, 0].astype(int)).max())); peak1 = max(peak1, int(abs(ears.last[:, 1].astype(int)).max()))
+            if frames % 375 == 0:                                   # every 30 s: proof of life for the microphone
+                log.info("mic 30s peak ch0=%d ch1=%d (silence is <100, speech nearby >2000)", peak0, peak1)
+                peak0 = peak1 = 0
             if diag and max(score, o) >= 0.1:
                 log.info("scores ch%d=%.2f ch%d=%.2f", channel, score, 1 - channel, o)
             if max(score, o) < wake.threshold:
