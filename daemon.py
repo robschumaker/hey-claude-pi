@@ -65,11 +65,24 @@ def main() -> int:
     other = audio.WakeWord(wake_path, wake.threshold)  # both channels are scored; the louder one wins
     log.info("listening for %s on both channels (recording follows the one that wakes; default %d)", wake.name, channel)
     frames, peak0, peak1 = 0, 0, 0
+    stall = {"frames": 0}
+
+    def _stall_watch():                                   # no audio for 20 s means the array wedged: exit, systemd restarts us via mic-check
+        import threading
+        last = -1
+        while True:
+            time.sleep(20)
+            if stall["frames"] == last:
+                log.error("no audio frames for 20 s; exiting so the service restarts and mic-check reboots the array")
+                os._exit(3)
+            last = stall["frames"]
+    import threading
+    threading.Thread(target=_stall_watch, daemon=True).start()
     try:
         while True:
             score = wake.heard(ears.frame())
             o = other.heard(ears.last[:, 1 - channel])
-            frames += 1
+            frames += 1; stall["frames"] = frames
             peak0 = max(peak0, int(abs(ears.last[:, 0].astype(int)).max())); peak1 = max(peak1, int(abs(ears.last[:, 1].astype(int)).max()))
             if frames % 375 == 0:                                   # every 30 s: proof of life for the microphone
                 log.info("mic 30s peak ch0=%d ch1=%d (silence is <100, speech nearby >2000)", peak0, peak1)
