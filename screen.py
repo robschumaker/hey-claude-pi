@@ -29,11 +29,11 @@ class Screen:
     def wake(self) -> None:
         self.was = self._read()
         if self.was == 0:
-            self._write(255)
+            self._write(int(os.environ.get("VOICE_SCREEN_BRIGHTNESS", "128")))   # half, not full: smaller current step on wake
             log.info("screen on for the exchange")
 
     def restore(self) -> None:
-        if self.was == 0 and self._read() == 255:
+        if self.was == 0 and (self._read() or 0) > 0:
             self._write(0)
             log.info("screen back off")
         self.was = None
