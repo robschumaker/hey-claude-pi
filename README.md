@@ -9,12 +9,13 @@ Measured on a Pi 4 that is also driving a kiosk: a plain answer in 3 to 4 second
 ```
 ReSpeaker XVF3800 (USB, 2 channels, 16 kHz)
    └─ audio.Ears ── openWakeWord "hey_claude" on both channels (local, ~80 ms frames)
-         └─ wake ── audio.record_utterance: Silero VAD end-pointing, 0.5 s pre-roll
-               └─ hosted.Transcriber: Deepgram Nova-3 speech to text (~1 s)
+         └─ wake ── audio.chime: rising two-tone on the speaker, then
+            audio.record_utterance: Silero VAD end-pointing, 0.5 s pre-roll
+               └─ hosted.DeepgramTranscriber: Nova-3 speech to text (~1 s)
                      └─ brain_cc.ClaudeCodeBrain: one persistent `claude -p --input-format stream-json`
                         process, tools = the MCP servers in mcp.json + WebSearch + WebFetch
-                           └─ hosted speech (Deepgram Aura-2) ── played on the array's speaker,
-                              or rendered and cast to a Google display (cast.py)
+                           └─ hosted.DeepgramVoice (Aura-2) ── normalised and played on the array's
+                              speaker, or rendered and cast to a Google display (cast.py)
 web.py: state endpoint + overlay script for the kiosk; screen.py: wakes the display for the exchange
 mic-check.sh: ExecStartPre that reboots the array's firmware if its audio pipeline is wedged
 ```
@@ -30,7 +31,9 @@ Everything lives in one process (`daemon.py`) and one systemd unit. The daemon l
 
 ## Setup
 
-1. Python 3.13 venv: `python3 -m venv venv-voice && venv-voice/bin/pip install -r requirements.txt`. openWakeWord is pinned `--no-deps` because tflite-runtime has no Python 3.13 wheels; ONNX is used instead. `sudo apt install libportaudio2`.
+Layout: the code is a Python package named `voice`, so clone this repo into a directory called `voice` under a parent, for example `/home/pi/household-mcp/voice`. The unit, `install.sh` and the commands below assume that parent and run from it (`venv-voice/bin/python voice/daemon.py`). Change the paths in `systemd/household-voice.service` if yours differ.
+
+1. In the parent directory, a Python 3.13 venv: `python3 -m venv venv-voice && venv-voice/bin/pip install -r voice/requirements.txt`. openWakeWord is pinned `--no-deps` because tflite-runtime has no Python 3.13 wheels; ONNX is used instead. `sudo apt install libportaudio2 alsa-utils` (the unit uses `amixer`). `install.sh` does the venv and the unit over SSH.
 2. Models in `/home/pi/voice-models/`: `hey_claude.onnx` (openWakeWord model from huggingface.co/gdiamos/hey-claude, Apache-2.0). Piper voices are only needed for the local fallback.
 3. `scripts/respeaker-udev.sh` for control access to the array (LED brightness, firmware reboot through Seeed's `xvf_host`).
 4. Claude Code installed on the Pi and logged in as the service user (`claude` on the PATH of that user). No API key is needed; `brain.py` is an alternative brain that uses the Anthropic API if `ANTHROPIC_API_KEY` is set.
@@ -59,7 +62,7 @@ Everything lives in one process (`daemon.py`) and one systemd unit. The daemon l
 
 ## Status
 
-Working in one house since October 2026. Known limits: the published wake-word model misses some non-US accents and false-wakes on near-homophones; a wake during the Claude Code warm-up burst can lose frames.
+Working in one house since October 2026, replies through a speaker on the array's amplifier since 24 October. Known limits: the published wake-word model misses some non-US accents and false-wakes on near-homophones; a wake during the Claude Code warm-up burst can lose frames.
 
 ## License
 

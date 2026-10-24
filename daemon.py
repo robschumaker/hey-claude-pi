@@ -54,8 +54,8 @@ def main() -> int:
     scr = screen_mod.Screen()
     output = cfg("VOICE_OUTPUT", "respeaker")
     if output.startswith("cast:"):
-        # Current kitchen setup: reply through a Google Cast speaker. No echo cancellation that way,
-        # so we simply do not listen while it talks. Long-term: a speaker on the ReSpeaker's amplifier.
+        # Fallback when no speaker is on the array: reply through a Google Cast device. No echo
+        # cancellation or wake chime that way, so we simply do not listen while it talks.
         tts = cast_out.CastVoice(tts, output.split(":", 1)[1])
         log.info("output: cast to %s", output.split(":", 1)[1])
     follow_up = float(cfg("VOICE_FOLLOW_UP_SECONDS", "6"))
