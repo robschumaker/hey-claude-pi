@@ -10,7 +10,7 @@ Group=pi
 WorkingDirectory=/home/pi/household-mcp
 Environment=ENV_FILE=/home/pi/household/.env
 ExecStartPre=/home/pi/household-mcp/voice/mic-check.sh
-ExecStartPre=-/usr/bin/amixer -q -D hw:Array sset PCM 85%
+ExecStartPre=-/usr/bin/amixer -q -D hw:Array sset PCM 100%
 ExecStart=/home/pi/household-mcp/venv-voice/bin/python /home/pi/household-mcp/voice/daemon.py
 # Beat the kiosk's Chromium to the CPU while a request is in flight (default Nice 0, CPUWeight 100).
 # The 2026-10-24 cap (CPUQuota=200%, Nice=5) starved the audio reader during Claude Code warm-ups:

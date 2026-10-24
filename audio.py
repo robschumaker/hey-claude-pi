@@ -181,7 +181,7 @@ class Voice:
         sd.play(audio, samplerate=RATE, device=self.device, blocking=True)
 
 
-def chime(output_device: int, notes=((660.0, 110), (990.0, 160)), gain: float = 0.6) -> None:
+def chime(output_device: int, notes=((660.0, 110), (990.0, 160)), gain: float = 0.9) -> None:
     """Acknowledgement: a short rising two-tone right after the wake word, meaning "heard you, go ahead".
     Blocking, so recording starts only once it has finished."""
     import sounddevice as sd

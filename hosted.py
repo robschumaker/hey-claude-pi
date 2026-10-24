@@ -17,6 +17,15 @@ log = logging.getLogger("voice.hosted")
 RATE = 16000
 
 
+def loud(audio: np.ndarray, peak: float = 0.9) -> np.ndarray:
+    """Normalise to `peak` of full scale, then apply VOICE_GAIN (default 1.0) with clipping. Deepgram's
+    renders peak around a third of full scale, which is quiet on a small amplifier."""
+    a = audio.astype(np.float32)
+    top = float(np.abs(a).max()) or 1.0
+    gain = float(os.environ.get("VOICE_GAIN", "1.0"))
+    return np.clip(a * (peak * 32767 / top) * gain, -32767, 32767).astype(np.int16)
+
+
 def _wav_bytes(audio: np.ndarray) -> bytes:
     buf = io.BytesIO()
     with wave.open(buf, "wb") as w:
@@ -57,7 +66,7 @@ class DeepgramVoice:
         t = time.monotonic()
         audio = self.render(text)
         log.info("deepgram tts %.1fs for %d chars", time.monotonic() - t, len(text))
-        sd.play(audio, samplerate=RATE, device=self.device, blocking=True)
+        sd.play(loud(audio), samplerate=RATE, device=self.device, blocking=True)
 
 
 def available() -> str | None:
