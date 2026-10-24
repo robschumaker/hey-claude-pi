@@ -53,3 +53,7 @@ Everything lives in one process (`daemon.py`) and one systemd unit. The daemon l
 ## Status
 
 Working in one house since October 2026. Known limits: the published wake-word model misses some non-US accents and false-wakes on near-homophones; a wake during the Claude Code warm-up burst can lose frames.
+
+## License
+
+MIT; see `LICENSE`. The hey_claude wake-word model and openWakeWord are Apache-2.0.
