@@ -101,20 +101,32 @@ def house(what: str = "all") -> dict:
     return hubitat.summary(what)
 
 
-@mcp.tool
-def music(action: str = "status", station: str | None = None) -> str:
-    """Pandora on the kitchen speaker. action: play (with an optional station name, or resumes the last one),
-    pause, stop, next, love, ban, status, stations. Use for anything about music: play some jazz, what is this
-    song, skip, I like this, turn the music off."""
+def _daemon(path: str, body: dict, timeout: int = 40) -> str:
     import json
     import urllib.request
     from voice.web import lan_ip
-    url = os.environ.get("VOICE_WEB", f"http://{lan_ip()}:8766") + "/music"
-    req = urllib.request.Request(url, data=json.dumps({"action": action, "station": station}).encode(), method="POST",
+    url = os.environ.get("VOICE_WEB", f"http://{lan_ip()}:8766") + path
+    req = urllib.request.Request(url, data=json.dumps(body).encode(), method="POST",
                                  headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=40) as r:
+    with urllib.request.urlopen(req, timeout=timeout) as r:
         d = json.load(r)
     return d.get("result") or d.get("error") or "no answer"
+
+
+@mcp.tool
+def assistant_volume(level: int) -> str:
+    """How loud the assistant's own voice and chime are, 1 to 10 (10 loudest). Use when asked to speak louder
+    or softer, or to set the voice volume. The music has its own volume, on the music tool."""
+    return _daemon("/assistant_volume", {"level": level})
+
+
+@mcp.tool
+def music(action: str = "status", station: str | None = None) -> str:
+    """Pandora on the kitchen speaker. action: play (with an optional station name, or resumes the last one),
+    pause, stop, next, love, ban, status, stations, volume (pass the level 1 to 10, or up or down, in station).
+    Use for anything about music: play some jazz, what is this song, skip, I like this, music volume seven,
+    turn it down, turn the music off."""
+    return _daemon("/music", {"action": action, "station": station})
 
 
 if __name__ == "__main__":

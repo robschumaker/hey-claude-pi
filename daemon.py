@@ -60,9 +60,11 @@ def main() -> int:
         ntfy.start_if_configured(brain)                # text commands from the owner's phone, if set up
     music = None
     if cfg("PANDORA_USER", "") and cfg("PANDORA_PASSWORD", ""):
-        music = music_mod.Pianobar(cfg("PANDORA_USER", ""), cfg("PANDORA_PASSWORD", ""), int(cfg("VOICE_MUSIC_VOLUME_DB", "-6")))
+        music = music_mod.Pianobar(cfg("PANDORA_USER", ""), cfg("PANDORA_PASSWORD", ""), int(cfg("VOICE_MUSIC_LEVEL", "8")))
         web.HANDLERS["music"] = lambda body: music.command(body.get("action", "status"), body.get("station"))
+        web.EXTRA["music"] = music.state
         log.info("music: Pandora through pianobar, on the speaker; paused during exchanges")
+    web.HANDLERS["assistant_volume"] = lambda body: audio.speaker_level(body.get("level", 10))
     scr = screen_mod.Screen()
     output = cfg("VOICE_OUTPUT", "respeaker")
     if output.startswith("cast:"):
@@ -99,7 +101,7 @@ def main() -> int:
             if diag and max(score, o) >= 0.1:
                 log.info("scores ch%d=%.2f ch%d=%.2f", channel, score, 1 - channel, o)
             run = run + 1 if max(score, o) >= wake.threshold else 0
-            if run < need:
+            if run < (1 if music and music.playing else need):   # over music one strong frame is enough
                 continue
             run = 0
             ears.channel = channel if score >= o else 1 - channel

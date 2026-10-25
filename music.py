@@ -22,8 +22,12 @@ ONSTATION = re.compile(r"\|>\s+Station \"(.+?)\"")
 
 
 class Pianobar:
-    def __init__(self, user: str, password: str, volume_db: int = -6, bin_path: str = "pianobar"):
-        self.user, self.password, self.volume_db, self.bin = user, password, volume_db, bin_path
+    LEVEL_DB = {n: -27 + 3 * (n - 1) for n in range(1, 11)}      # 1 -> -27 dB ... 10 -> 0 dB
+
+    def __init__(self, user: str, password: str, level: int = 8, bin_path: str = "pianobar"):
+        self.user, self.password, self.bin = user, password, bin_path
+        self.level = max(1, min(10, int(level)))
+        self.volume_db = self.LEVEL_DB[1]                      # pianobar's config volume = level 1; we step up from there
         self.proc: subprocess.Popen | None = None
         self.lock = threading.Lock()
         self.stations: list[str] = []
@@ -32,6 +36,7 @@ class Pianobar:
         self.playing = False            # a station is running and not paused
         self.ducked = False             # paused by us for an exchange
         self.last_station: str | None = None
+        self.level_pending = False
 
     # ---- process ------------------------------------------------------------------------
     def _config(self) -> None:
@@ -51,6 +56,7 @@ class Pianobar:
                                      bufsize=0)
         threading.Thread(target=self._reader, daemon=True, name="pianobar-out").start()
         log.info("pianobar started pid %d", self.proc.pid)
+        self.level_pending = True      # keystrokes before the first song would be read as the station answer
 
     def _reader(self) -> None:
         """pianobar's prompt "[?] Select station:" has no newline, so read in chunks, not lines."""
@@ -90,6 +96,9 @@ class Pianobar:
                 self.song = {"title": m.group(1), "artist": m.group(2), "album": m.group(3), "station": self.last_station}
                 self.playing = True
                 log.info("pianobar: %s by %s", m.group(1), m.group(2))
+                if self.level_pending:                       # now safe: pianobar is playing, not prompting
+                    self.level_pending = False
+                    self._send("^" + ")" * (self.LEVEL_DB[self.level] - self.LEVEL_DB[1]))
                 return
             m = ONSTATION.search(line)
             if m:
@@ -163,6 +172,28 @@ class Pianobar:
         with self.lock:
             self._send("-"); return "Thumbs down, skipping."
 
+    def volume(self, level) -> str:
+        """Music level 1 to 10 (10 loudest); 'up' and 'down' move two steps."""
+        with self.lock:
+            if isinstance(level, str) and level.strip().lower() in ("up", "louder"):
+                level = self.level + 2
+            elif isinstance(level, str) and level.strip().lower() in ("down", "quieter", "softer"):
+                level = self.level - 2
+            try:
+                new = max(1, min(10, int(level)))
+            except (TypeError, ValueError):
+                return "Volume is a number from one to ten."
+            self.level = new
+            if self._alive() and not self.level_pending:
+                self._send("^" + ")" * (self.LEVEL_DB[new] - self.LEVEL_DB[1]))   # reset to config (level 1), step up
+            return f"Music volume {new}."
+
+    def state(self) -> dict:
+        """For the kitchen screen."""
+        return {"on": self._alive(), "playing": self.playing, "level": self.level,
+                "title": self.song.get("title"), "artist": self.song.get("artist"), "album": self.song.get("album"),
+                "station": self.song.get("station") or self.last_station}
+
     def status(self) -> str:
         if not self._alive():
             return "Music is off."
@@ -193,10 +224,12 @@ class Pianobar:
                 self._send("P"); self.playing = True; self.ducked = False
 
     def command(self, action: str, station: str | None = None) -> str:
+        """station doubles as the argument for volume (a level 1-10, or up/down)."""
         action = (action or "status").strip().lower()
         table = {"play": lambda: self.play(station), "resume": lambda: self.play(None) if self._alive() else self.play(station),
                  "pause": self.pause, "stop": self.stop, "next": self.next, "skip": self.next, "love": self.love,
-                 "like": self.love, "ban": self.ban, "dislike": self.ban, "status": self.status, "stations": self.list_stations}
+                 "like": self.love, "ban": self.ban, "dislike": self.ban, "status": self.status, "stations": self.list_stations,
+                 "volume": lambda: self.volume(station)}
         if action not in table:
             return "Unknown music action " + action + "."
         t = time.monotonic()

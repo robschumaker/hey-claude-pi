@@ -18,6 +18,7 @@ log = logging.getLogger("voice.web")
 HERE = os.path.dirname(os.path.abspath(__file__))
 STATE = {"state": "idle", "since": time.time()}
 HANDLERS: dict = {}          # name -> callable(dict) -> str; registered by the daemon (music)
+EXTRA: dict = {}             # key -> callable() -> dict, merged into state.json (music now-playing)
 MEDIA_DIR = tempfile.mkdtemp(prefix="voice-media-")
 
 
@@ -50,7 +51,13 @@ class _Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         path = self.path.split("?", 1)[0]
         if path == "/state.json":
-            return self._send(200, json.dumps(STATE).encode(), "application/json")
+            st = dict(STATE)
+            for k, f in EXTRA.items():
+                try:
+                    st[k] = f()
+                except Exception:
+                    st[k] = None
+            return self._send(200, json.dumps(st).encode(), "application/json")
         if path in ("/overlay.js", "/logo.svg"):
             with open(os.path.join(HERE, "web", path[1:]), "rb") as f:
                 return self._send(200, f.read(), "application/javascript" if path.endswith(".js") else "image/svg+xml")

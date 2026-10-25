@@ -223,11 +223,22 @@ class Voice:
         sd.play(audio, samplerate=RATE, device=self.device, blocking=True)
 
 
+SPEAKER_LEVEL: dict = {"percent": None}     # set by the assistant_volume tool; None means VOICE_SPEAKER_VOLUME
+
+
+def speaker_level(level: int) -> str:
+    """Assistant voice level 1-10 -> amplifier percent (1 -> 40%, 10 -> 100%)."""
+    n = max(1, min(10, int(level)))
+    SPEAKER_LEVEL["percent"] = 40 + (n - 1) * 60 // 9
+    set_volume()
+    return f"Voice volume {n}."
+
+
 def set_volume(percent: int | None = None, card: str = "hw:Array", control: str = "PCM") -> None:
     """Set the array's speaker level. The XVF3800 comes up at 62% after every power-up or firmware reboot,
     so this runs after the device is found and again before each reply. Cheap (one amixer call)."""
     import subprocess
-    pct = int(percent if percent is not None else os.environ.get("VOICE_SPEAKER_VOLUME", "100"))
+    pct = int(percent if percent is not None else (SPEAKER_LEVEL["percent"] or os.environ.get("VOICE_SPEAKER_VOLUME", "100")))
     try:
         subprocess.run(["amixer", "-q", "-D", card, "sset", control, f"{pct}%"], check=False, timeout=5,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
