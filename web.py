@@ -68,6 +68,14 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                     return self._send(200, f.read(), "audio/wav")
         self._send(404, b"not found", "text/plain")
 
+    def do_OPTIONS(self):                                  # CORS preflight from the kiosk page (another port)
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Max-Age", "86400")
+        self.end_headers()
+
     def do_POST(self):
         path = self.path.split("?", 1)[0]
         name = path.strip("/")

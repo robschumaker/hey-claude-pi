@@ -46,8 +46,10 @@
   document.body.appendChild(bar);
   var music = null;
   function send(action, arg) {
-    return fetch(base + "/music", {method: "POST", headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({action: action, station: arg === undefined ? null : arg})}).catch(function () {});
+    // text/plain body: a "simple" request, no CORS preflight needed
+    return fetch(base + "/music", {method: "POST", headers: {"Content-Type": "text/plain"},
+      body: JSON.stringify({action: action, station: arg === undefined ? null : arg})})
+      .then(function () { setTimeout(tick, 300); }).catch(function (e) { console.warn("music control failed", e); });
   }
   bar.addEventListener("click", function (e) {
     var b = e.target.closest("button"); if (!b || !music) return;
