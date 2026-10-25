@@ -36,6 +36,7 @@ def cfg(name: str, default: str) -> str:
 def main() -> int:
     inp, out = audio.find_device(cfg("VOICE_DEVICE", "XVF3800"))
     log.info("audio in=%d out=%d", inp, out)
+    audio.open_softvol(cfg("VOICE_OUTPUT_PCM", "voice"))
     audio.set_volume()                                 # the array forgets its level on every reset
     wake_path = cfg("VOICE_WAKE_MODEL", "/home/pi/voice-models/hey_claude.onnx")
     wake = audio.WakeWord(wake_path, float(cfg("VOICE_WAKE_THRESHOLD", "0.5")))
@@ -64,7 +65,6 @@ def main() -> int:
         web.HANDLERS["music"] = lambda body: music.command(body.get("action", "status"), body.get("station"))
         web.EXTRA["music"] = music.state
         log.info("music: Pandora through pianobar, on the speaker; paused during exchanges")
-    web.HANDLERS["assistant_volume"] = lambda body: audio.speaker_level(body.get("level", 10))
     scr = screen_mod.Screen()
     output = cfg("VOICE_OUTPUT", "respeaker")
     if output.startswith("cast:"):
@@ -81,6 +81,7 @@ def main() -> int:
     both = cfg("VOICE_SCORE_BOTH", "0") == "1"
     other = audio.WakeWord(wake_path, wake.threshold) if both else None
     need = int(cfg("VOICE_WAKE_FRAMES", "2"))      # consecutive frames over threshold: one-frame spikes are noise
+    music_thr = float(cfg("VOICE_WAKE_THRESHOLD_MUSIC", "0.35"))   # music drowns the wake word; listen harder
     log.info("listening for %s on channel %d%s, %d frames over %.2f", wake.name, channel,
              " (both channels scored)" if both else "", need, wake.threshold)
     run = 0
@@ -100,8 +101,9 @@ def main() -> int:
             o = other.heard(ears.last[:, 1 - channel]) if other else 0.0
             if diag and max(score, o) >= 0.1:
                 log.info("scores ch%d=%.2f ch%d=%.2f", channel, score, 1 - channel, o)
-            run = run + 1 if max(score, o) >= wake.threshold else 0
-            if run < (1 if music and music.playing else need):   # over music one strong frame is enough
+            over_music = bool(music and music.playing)
+            run = run + 1 if max(score, o) >= (music_thr if over_music else wake.threshold) else 0
+            if run < (1 if over_music else need):                 # over music: one frame, lower bar
                 continue
             run = 0
             ears.channel = channel if score >= o else 1 - channel

@@ -27,7 +27,7 @@ class Pianobar:
     def __init__(self, user: str, password: str, level: int = 8, bin_path: str = "pianobar"):
         self.user, self.password, self.bin = user, password, bin_path
         self.level = max(1, min(10, int(level)))
-        self.volume_db = self.LEVEL_DB[1]                      # pianobar's config volume = level 1; we step up from there
+        self.volume_db = 0                                     # pianobar's own gain stays at 0: level lives on the Music softvol
         self.proc: subprocess.Popen | None = None
         self.lock = threading.Lock()
         self.stations: list[str] = []
@@ -56,7 +56,7 @@ class Pianobar:
                                      bufsize=0)
         threading.Thread(target=self._reader, daemon=True, name="pianobar-out").start()
         log.info("pianobar started pid %d", self.proc.pid)
-        self.level_pending = True      # keystrokes before the first song would be read as the station answer
+        self.level_pending = True      # the Music control appears once pianobar opens the device; apply then
 
     def _reader(self) -> None:
         """pianobar's prompt "[?] Select station:" has no newline, so read in chunks, not lines."""
@@ -96,9 +96,9 @@ class Pianobar:
                 self.song = {"title": m.group(1), "artist": m.group(2), "album": m.group(3), "station": self.last_station}
                 self.playing = True
                 log.info("pianobar: %s by %s", m.group(1), m.group(2))
-                if self.level_pending:                       # now safe: pianobar is playing, not prompting
+                if self.level_pending:                       # pianobar has opened the device: the control exists now
                     self.level_pending = False
-                    self._send("^" + ")" * (self.LEVEL_DB[self.level] - self.LEVEL_DB[1]))
+                    self._apply_level()
                 return
             m = ONSTATION.search(line)
             if m:
@@ -183,11 +183,18 @@ class Pianobar:
                 new = max(1, min(10, int(level)))
             except (TypeError, ValueError):
                 return "Volume is a number from one to ten."
-            diff = self.LEVEL_DB[new] - self.LEVEL_DB[self.level]        # 3 dB per step, relative: few keystrokes
             self.level = new
-            if self._alive() and not self.level_pending and diff:
-                self._send((")" if diff > 0 else "(") * abs(diff))
+            self._apply_level()
             return f"Music volume {new}."
+
+    def _apply_level(self) -> None:
+        """Instant and clean: an ALSA softvol ("Music") on the shared mixer, not pianobar's keystroke gain."""
+        import subprocess
+        try:
+            subprocess.run(["amixer", "-q", "-D", "hw:Array", "sset", "Music", "--", f"{self.LEVEL_DB[self.level]}dB"],
+                           timeout=5, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception as e:
+            log.warning("music level: %s", e)
 
     def state(self) -> dict:
         """For the kitchen screen."""

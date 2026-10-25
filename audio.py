@@ -26,7 +26,7 @@ def find_device(name_part: str) -> tuple[int, int]:
                 inp = i
             if out is None and d["max_output_channels"] > 0:
                 out = i
-    shared = os.environ.get("VOICE_OUTPUT_PCM", "array")      # dmix on the array, shared with pianobar
+    shared = os.environ.get("VOICE_OUTPUT_PCM", "voice")      # softvol -> dmix on the array, shared with pianobar
     for i, d in enumerate(sd.query_devices()):
         if d["name"] == shared and d["max_output_channels"] > 0:
             out = i
@@ -223,27 +223,34 @@ class Voice:
         sd.play(audio, samplerate=RATE, device=self.device, blocking=True)
 
 
-SPEAKER_LEVEL: dict = {"percent": None}     # set by the assistant_volume tool; None means VOICE_SPEAKER_VOLUME
+VOICE_LEVEL_DB = {n: -2 * (10 - n) for n in range(1, 11)}      # assistant voice: 10 -> 0 dB, 7 -> -6 dB, 1 -> -18 dB
 
 
-def speaker_level(level: int) -> str:
-    """Assistant voice level 1-10 -> amplifier percent (1 -> 40%, 10 -> 100%)."""
-    n = max(1, min(10, int(level)))
-    SPEAKER_LEVEL["percent"] = 40 + (n - 1) * 60 // 9
-    set_volume()
-    return f"Voice volume {n}."
-
-
-def set_volume(percent: int | None = None, card: str = "hw:Array", control: str = "PCM") -> None:
-    """Set the array's speaker level. The XVF3800 comes up at 62% after every power-up or firmware reboot,
-    so this runs after the device is found and again before each reply. Cheap (one amixer call)."""
+def _amixer(*args) -> bool:
     import subprocess
-    pct = int(percent if percent is not None else (SPEAKER_LEVEL["percent"] or os.environ.get("VOICE_SPEAKER_VOLUME", "100")))
     try:
-        subprocess.run(["amixer", "-q", "-D", card, "sset", control, f"{pct}%"], check=False, timeout=5,
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except Exception as e:                                # missing amixer or card: say so once, keep going
-        log.warning("set_volume: %s", e)
+        return subprocess.run(["amixer", "-q", "-D", "hw:Array", "sset", *args], timeout=5,
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+    except Exception:
+        return False
+
+
+def set_volume(percent: int | None = None) -> None:
+    """The array forgets its hardware level on every reset: pin it at 100% and put the assistant's own level on
+    the "Voice" software control (an ALSA softvol on the shared mixer, see /etc/asound.conf). The music has its
+    own "Music" control, so neither changes the other. Cheap; called before every reply."""
+    _amixer("PCM", f"{percent if percent is not None else 100}%")
+    level = max(1, min(10, int(os.environ.get("VOICE_SPEAKER_LEVEL", "7"))))
+    _amixer("Voice", "--", f"{VOICE_LEVEL_DB[level]}dB")
+
+
+def open_softvol(pcm: str) -> None:
+    """A softvol control only exists once its PCM has been opened; open it once at start so set_volume works."""
+    import sounddevice as sd
+    try:
+        sd.play(np.zeros(160, dtype=np.int16), samplerate=RATE, device=pcm, blocking=True)
+    except Exception as e:
+        log.warning("open_softvol(%s): %s", pcm, e)
 
 
 def chime(output_device: int, notes=((660.0, 110), (990.0, 160)), gain: float = 0.9) -> None:

@@ -114,13 +114,6 @@ def _daemon(path: str, body: dict, timeout: int = 40) -> str:
 
 
 @mcp.tool
-def assistant_volume(level: int) -> str:
-    """How loud the assistant's own voice and chime are, 1 to 10 (10 loudest). Use when asked to speak louder
-    or softer, or to set the voice volume. The music has its own volume, on the music tool."""
-    return _daemon("/assistant_volume", {"level": level})
-
-
-@mcp.tool
 def music(action: str = "status", station: str | None = None) -> str:
     """Pandora on the kitchen speaker. action: play (with an optional station name, or resumes the last one),
     pause, stop, next, love, ban, status, stations, volume (pass the level 1 to 10, or up or down, in station).
