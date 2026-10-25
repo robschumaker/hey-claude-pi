@@ -23,7 +23,8 @@
     "#claude-music .np b{display:block;font-size:19px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}" +
     "#claude-music .np span{display:block;opacity:.75;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}" +
     "#claude-music button{width:58px;height:58px;border:0;border-radius:50%;background:rgba(255,255,255,.1);color:#f3ede8;" +
-    "font-size:24px;line-height:58px;padding:0;touch-action:manipulation;cursor:pointer}" +
+    "font-size:26px;line-height:58px;padding:0;touch-action:manipulation;cursor:pointer;display:inline-flex;align-items:center;justify-content:center}" +
+    "#claude-music button svg{display:block}" +
     "#claude-music button:active{background:rgba(217,119,87,.8)}" +
     "#claude-music .lvl{font-variant-numeric:tabular-nums;opacity:.7;font-size:15px;min-width:34px;text-align:center}" +
     "#claude-music .np{cursor:pointer}" +
@@ -44,10 +45,10 @@
   var bar = document.createElement("div");
   bar.id = "claude-music";
   bar.innerHTML = '<div class="np"><b></b><span></span></div>' +
-    '<button data-a="toggle" title="Play / pause">&#9646;&#9646;</button>' +
-    '<button data-a="next" title="Skip">&#9197;</button>' +
-    '<button data-a="love" title="Thumbs up">&#128077;</button>' +
-    '<button data-a="ban" title="Thumbs down">&#128078;</button>' +
+    '<button data-a="toggle" title="Play / pause"><svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor"><path d="M5 4h5v16H5V4zm9 0h5v16h-5V4z"/></svg></button>' +
+    '<button data-a="next" title="Skip"><svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor"><path d="M5 4l10 8-10 8V4zm12 0h3v16h-3V4z"/></svg></button>' +
+    '<button data-a="love" title="Thumbs up"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M7 11v9H3v-9h4zm2 0l4-8c1.7 0 2.5 1.2 2.5 2.5V9H20a2 2 0 0 1 2 2l-1.5 7.5a2 2 0 0 1-2 1.5H9v-9z"/></svg></button>' +
+    '<button data-a="ban" title="Thumbs down"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M17 13V4h4v9h-4zm-2 0l-4 8c-1.7 0-2.5-1.2-2.5-2.5V15H4a2 2 0 0 1-2-2l1.5-7.5A2 2 0 0 1 5.5 4H15v9z"/></svg></button>' +
     '<button data-a="vol-" title="Quieter">&minus;</button><div class="lvl"></div><button data-a="vol+" title="Louder">+</button>' +
     '<button data-a="stop" title="Off">&#10005;</button>';
   document.body.appendChild(bar);
@@ -90,7 +91,7 @@
     bar.className = "on";
     bar.querySelector(".np b").textContent = m.title ? m.title + (m.artist ? " \u2014 " + m.artist : "") : "Pandora";
     bar.querySelector(".np span").textContent = (m.station || "") + (m.playing ? "" : "  \u00b7  paused");
-    bar.querySelector('[data-a="toggle"]').innerHTML = m.playing ? "&#9646;&#9646;" : "&#9654;";
+    bar.querySelector('[data-a="toggle"]').innerHTML = m.playing ? '<svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor"><path d="M5 4h5v16H5V4zm9 0h5v16h-5V4z"/></svg>' : '<svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor"><path d="M6 4l14 8-14 8V4z"/></svg>';
     bar.querySelector(".lvl").textContent = m.level || "";
   }
   var last = "";
