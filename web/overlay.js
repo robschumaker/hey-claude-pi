@@ -25,7 +25,14 @@
     "#claude-music button{width:58px;height:58px;border:0;border-radius:50%;background:rgba(255,255,255,.1);color:#f3ede8;" +
     "font-size:24px;line-height:58px;padding:0;touch-action:manipulation;cursor:pointer}" +
     "#claude-music button:active{background:rgba(217,119,87,.8)}" +
-    "#claude-music .lvl{font-variant-numeric:tabular-nums;opacity:.7;font-size:15px;min-width:34px;text-align:center}";
+    "#claude-music .lvl{font-variant-numeric:tabular-nums;opacity:.7;font-size:15px;min-width:34px;text-align:center}" +
+    "#claude-music .np{cursor:pointer}" +
+    "#claude-stations{position:fixed;left:0;right:0;bottom:80px;display:none;flex-wrap:wrap;gap:10px;padding:14px 16px;" +
+    "background:rgba(20,16,14,.96);z-index:2147483646;box-shadow:0 -6px 24px rgba(0,0,0,.5)}" +
+    "#claude-stations.on{display:flex}" +
+    "#claude-stations button{height:52px;padding:0 18px;border:0;border-radius:26px;background:rgba(255,255,255,.12);" +
+    "color:#f3ede8;font:500 17px system-ui,sans-serif;touch-action:manipulation}" +
+    "#claude-stations button.now{background:rgba(217,119,87,.85)}";
   document.head.appendChild(css);
   var box = document.createElement("div");
   box.id = "claude-voice";
@@ -45,6 +52,20 @@
     '<button data-a="stop" title="Off">&#10005;</button>';
   document.body.appendChild(bar);
   var music = null;
+  var picker = document.createElement("div");
+  picker.id = "claude-stations";
+  document.body.appendChild(picker);
+  function showPicker() {
+    if (!music || !music.stations || !music.stations.length) return;
+    picker.innerHTML = "";
+    music.stations.forEach(function (name) {
+      var b = document.createElement("button");
+      b.textContent = name; if (name === music.station) b.className = "now";
+      b.onclick = function () { picker.className = ""; send("play", name); };
+      picker.appendChild(b);
+    });
+    picker.className = picker.className === "on" ? "" : "on";
+  }
   function send(action, arg) {
     // text/plain body: a "simple" request, no CORS preflight needed
     return fetch(base + "/music", {method: "POST", headers: {"Content-Type": "text/plain"},
@@ -55,13 +76,17 @@
     var b = e.target.closest("button"); if (!b || !music) return;
     var a = b.getAttribute("data-a");
     if (a === "toggle") send(music.playing ? "pause" : "play");
-    else if (a === "vol+") send("volume", Math.min(10, (music.level || 8) + 1));
-    else if (a === "vol-") send("volume", Math.max(1, (music.level || 8) - 1));
+    else if (a === "vol+" || a === "vol-") {
+      music.level = Math.max(1, Math.min(10, (music.level || 8) + (a === "vol+" ? 1 : -1)));
+      bar.querySelector(".lvl").textContent = music.level;          // show it now, confirm on the next tick
+      send("volume", music.level);
+    }
     else send(a);
   });
+  bar.querySelector(".np").addEventListener("click", showPicker);
   function showMusic(m) {
     music = m;
-    if (!m || !m.on || !(m.title || m.station)) { bar.className = ""; return; }
+    if (!m || !m.on || !(m.title || m.station)) { bar.className = ""; picker.className = ""; return; }
     bar.className = "on";
     bar.querySelector(".np b").textContent = m.title ? m.title + (m.artist ? " \u2014 " + m.artist : "") : "Pandora";
     bar.querySelector(".np span").textContent = (m.station || "") + (m.playing ? "" : "  \u00b7  paused");

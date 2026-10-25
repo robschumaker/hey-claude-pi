@@ -183,14 +183,15 @@ class Pianobar:
                 new = max(1, min(10, int(level)))
             except (TypeError, ValueError):
                 return "Volume is a number from one to ten."
+            diff = self.LEVEL_DB[new] - self.LEVEL_DB[self.level]        # 3 dB per step, relative: few keystrokes
             self.level = new
-            if self._alive() and not self.level_pending:
-                self._send("^" + ")" * (self.LEVEL_DB[new] - self.LEVEL_DB[1]))   # reset to config (level 1), step up
+            if self._alive() and not self.level_pending and diff:
+                self._send((")" if diff > 0 else "(") * abs(diff))
             return f"Music volume {new}."
 
     def state(self) -> dict:
         """For the kitchen screen."""
-        return {"on": self._alive(), "playing": self.playing, "level": self.level,
+        return {"on": self._alive(), "playing": self.playing, "level": self.level, "stations": list(self.stations),
                 "title": self.song.get("title"), "artist": self.song.get("artist"), "album": self.song.get("album"),
                 "station": self.song.get("station") or self.last_station}
 
