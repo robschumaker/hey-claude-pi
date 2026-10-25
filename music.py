@@ -32,7 +32,8 @@ class Pianobar:
         self.proc: subprocess.Popen | None = None
         self.lock = threading.Lock()
         self.stations: list[str] = []
-        self.stations_ready = threading.Event()
+        self.stations_ready = threading.Event()      # the "[?] Select station:" prompt is open
+        self.started = threading.Event()             # either the prompt is open or a song is playing
         self.song: dict = {}
         self.playing = False            # a station is running and not paused
         self.ducked = False             # paused by us for an exchange
@@ -52,7 +53,7 @@ class Pianobar:
     def _start(self) -> None:
         self._config()
         self.stations, self.song = [], {}
-        self.stations_ready.clear()
+        self.stations_ready.clear(); self.started.clear()
         self.proc = subprocess.Popen([self.bin], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                      bufsize=0)
         threading.Thread(target=self._reader, daemon=True, name="pianobar-out").start()
@@ -74,7 +75,7 @@ class Pianobar:
                 line, buf = buf[:i], buf[i + 1:]
                 self._line(ANSI.sub("", line).strip())
             if "Select station" in ANSI.sub("", buf):
-                self.stations_ready.set()
+                self.stations_ready.set(); self.started.set()
                 buf = ""
         self.playing = False
         log.info("pianobar exited")
@@ -90,12 +91,12 @@ class Pianobar:
                     self.stations.append(name)
                 return
             if "Select station" in line:
-                self.stations_ready.set()
+                self.stations_ready.set(); self.started.set()
                 return
             m = NOWPLAYING.search(line)
             if m:
                 self.song = {"title": m.group(1), "artist": m.group(2), "album": m.group(3), "station": self.last_station}
-                self.playing = True
+                self.playing = True; self.started.set()
                 log.info("pianobar: %s by %s", m.group(1), m.group(2))
                 if self.level_pending:                       # pianobar has opened the device: the control exists now
                     self.level_pending = False
@@ -118,33 +119,40 @@ class Pianobar:
 
     # ---- commands -----------------------------------------------------------------------
     def play(self, station: str | None = None) -> str:
+        """Start or resume. pianobar either opens its station prompt or (sometimes) starts a station by itself."""
         with self.lock:
-            if not self._alive():
+            fresh = not self._alive()
+            if fresh:
                 self._start()
-            elif station is None:
-                self._send("P")
-                self.playing = True; self.ducked = False
+                if not self.started.wait(timeout=25):
+                    return "Pandora did not answer; check the login."
+            if station is None:
+                if self.stations_ready.is_set() and not self.playing:     # prompt open: take the first station
+                    self._pick(0)
+                else:
+                    self._send("P"); self.playing = True; self.ducked = False
                 return self.status()
-            else:
+            if not (self.stations_ready.is_set() and not self.playing):  # no prompt open: ask for the list
                 self.stations, self.stations_ready = [], threading.Event()
                 self._send("s")
-            if not self.stations_ready.wait(timeout=25):
-                self._send("\n")
-                return "Pandora did not answer with the station list; check the login."
+                if not self.stations_ready.wait(timeout=15):
+                    return "Pandora did not answer with the station list."
             if not self.stations:
+                self._send("\n")
                 return "No stations on this account."
-            want = (station or "").strip().lower()
-            idx = 0
-            if want:
-                hits = [i for i, n in enumerate(self.stations) if want in n.lower()]
-                if not hits:
-                    self._send("\n")   # leave the prompt as it was
-                    return "No station called " + station + ". Stations: " + ", ".join(self.stations[:12]) + "."
-                idx = hits[0]
-            self._send(f"{idx}\n")
-            self.last_station = self.stations[idx]
-            self.playing = True; self.ducked = False
-            return f"Playing {self.stations[idx]}."
+            want = station.strip().lower()
+            hits = [i for i, n in enumerate(self.stations) if want in n.lower()]
+            if not hits:
+                self._send("\n")                                         # leave the prompt as it was
+                return "No station called " + station + ". Stations: " + ", ".join(self.stations[:12]) + "."
+            self._pick(hits[0])
+            return f"Playing {self.stations[hits[0]]}."
+
+    def _pick(self, idx: int) -> None:
+        self._send(f"{idx}\n")
+        self.stations_ready.clear()
+        self.last_station = self.stations[idx] if idx < len(self.stations) else self.last_station
+        self.playing = True; self.ducked = False
 
     def pause(self) -> str:
         with self.lock:
@@ -213,12 +221,15 @@ class Pianobar:
         return "Pandora is starting."
 
     def list_stations(self) -> str:
-        if not self._alive():
-            with self.lock:
+        with self.lock:
+            if not self._alive():
                 self._start()
-                if not self.stations_ready.wait(timeout=25):
-                    return "Pandora did not answer; check the login."
-                self._send("\n")
+                self.started.wait(timeout=25)
+            if not self.stations:
+                self.stations, self.stations_ready = [], threading.Event()
+                self._send("s")
+                if self.stations_ready.wait(timeout=15):
+                    self._send("\n")                                     # close the prompt, keep what was playing
         return "Stations: " + ", ".join(self.stations) + "." if self.stations else "No stations."
 
     # ---- the exchange -------------------------------------------------------------------
