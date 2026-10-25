@@ -1,6 +1,6 @@
 # Hey Claude on a Raspberry Pi
 
-A "Hey Claude" voice assistant for the house: a ReSpeaker XVF3800 USB microphone array on a Raspberry Pi 4, a local wake word, hosted speech recognition and synthesis, and Claude as the brain, running as Claude Code in headless mode on a Claude subscription, with the household's own tools attached as an MCP server. A kiosk display shows a Claude logo that breathes while it listens, spins while it thinks and glows while it talks.
+A "Hey Claude" voice assistant for the house: a ReSpeaker XVF3800 USB microphone array on a Raspberry Pi 4, a local wake word, hosted speech recognition and synthesis, and Claude as the brain, running as Claude Code in headless mode on a Claude subscription, with the household's own tools attached as an MCP server. A kiosk display shows a Claude logo that breathes while it listens, spins while it thinks and glows while it talks. The same brain answers text commands sent from a phone through ntfy, each authenticated with a Google Authenticator code, and it can read the house's own sensors.
 
 Measured on a Pi 4 that is also driving a kiosk: a plain answer in 3 to 4 seconds from the end of the question, a tool answer in 4 to 6, a web-searched answer in 10 to 20.
 
@@ -16,6 +16,7 @@ ReSpeaker XVF3800 (USB, 2 channels, 16 kHz)
                         process, tools = the MCP servers in mcp.json + WebSearch + WebFetch
                            └─ hosted.DeepgramVoice (Aura-2) ── normalised and played on the array's
                               speaker, or rendered and cast to a Google display (cast.py)
+ntfy.py: phone commands in, replies out, TOTP-checked, same brain and conversation
 web.py: state endpoint + overlay script for the kiosk; screen.py: wakes the display for the exchange
 mic-check.sh: ExecStartPre that reboots the array's firmware if its audio pipeline is wedged
 ```
@@ -48,13 +49,23 @@ Layout: the code is a Python package named `voice`, so clone this repo into a di
 - Deepgram's renders peak at about a third of full scale, so replies are normalised before playback. `VOICE_GAIN` in `.env` scales further.
 - Voice: `VOICE_DEEPGRAM_TTS`. `voice/audition.py` fetches Deepgram's current Aura list (`--list`) and speaks a sample from each name you give it through the speaker, so you can choose by ear.
 
+## Conversation
+
+One Claude Code process stays warm; it is restarted after five idle minutes to give the Pi its memory back, but the conversation is resumed (`--resume`) so wakes through the day share one thread. The session id is kept in the store directory and survives daemon restarts and reboots; after `VOICE_SESSION_HOURS` a wake starts fresh, and "new conversation" over ntfy does so at once. Facts worth keeping beyond that go to the shared household memory through the remember tool.
+
+## Phone commands
+
+With the `NTFY_*` settings filled in, the daemon subscribes to the command topic. A message such as `483920 is the barn door open` is accepted when the six-digit code matches the enrolled authenticator within one 30 s step, has not been used before, and fewer than five bad codes arrived in the last ten minutes; the rest of the text goes to the brain and the answer is published on the reply topic, which the phone's ntfy app subscribes to. `scripts/totp-enrol.py` makes the secret, the topics and the QR code to scan. On a public ntfy server the topics are only as private as their names, so keep them long and random; the code is what proves it is you.
+
 ## Tools
 
-`mcp.json` lists the MCP servers the brain gets. The example attaches `store_mcp.py`, the household's own memory and lists server (shared memory, shopping list, notes between the family's assistants, and the weather at the house from Open-Meteo). Replace it with whatever servers your house has; the brain's prompt in `brain.py` describes the tools in plain words for speech. Bash, file editing and file reading are disallowed for the voice brain on purpose.
+`mcp.json` lists the MCP servers the brain gets. The example attaches `store_mcp.py`, the household's own memory and lists server (shared memory, shopping list, notes between the family's assistants, the weather at the house from Open-Meteo in metric, and `house`, live readings from a Hubitat hub: room temperatures, doors, leak sensors, plant soil moisture, power per circuit, lights, low batteries). Replace it with whatever servers your house has; the brain's prompt in `brain.py` describes the tools in plain words for speech. Bash, file editing and file reading are disallowed for the voice brain on purpose.
 
 ## Lessons that cost time
 
 - Never cap or de-prioritise the daemon's service. Its Claude Code child restarts after idling, and under a CPU quota the warm-up starves the audio reader: input overflows, chopped recordings. The unit runs at Nice -10 with a high CPU weight.
+- Scoring the wake word on both of the array's channels doubled the model cost (33 ms of every 80 ms frame on a Pi 4) and, over two days, produced half the false wakes and none of the real ones. One channel, and two consecutive frames over the threshold, cut the false wakes.
+- Read the microphone in PortAudio's callback into a queue, never with a blocking read in the processing loop. A blocking read loses audio whenever the loop is late, and lost blocks make the wake-word model fire on garbage; a queue turns lateness into backlog, which the heartbeat logs.
 - Loudness is not speech. An energy gate either chops a quiet speaker to a syllable or never starts. Silero VAD, shipped with openWakeWord, costs 10 ms per 80 ms frame and only runs while recording.
 - After a hard power cut the XVF3800 can enumerate and answer its control interface while its audio pipeline is wedged (capture stream "running", hardware pointer stuck, `arecord` gives I/O errors). A firmware reboot through `xvf_host REBOOT 1` fixes it; `mic-check.sh` does that before every start and the daemon exits if no frames arrive for 20 s so systemd re-runs the check.
 - Never change the Pi's Wi-Fi connection from a session running over it.

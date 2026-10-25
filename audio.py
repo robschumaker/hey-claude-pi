@@ -33,22 +33,59 @@ def find_device(name_part: str) -> tuple[int, int]:
 
 
 class Ears:
-    """One always-open input stream; frames are pulled 80 ms at a time."""
+    """One always-open input stream. PortAudio's callback copies every 80 ms block into a queue on its own
+    thread, so the capture never waits for the wake-word model; frame() pulls from the queue. A busy Pi
+    (kiosk Chromium, the brain's warm-up burst) then shows up as backlog, not as lost audio. If the
+    device stops delivering for 20 s, frame() raises and the daemon exits so systemd re-runs mic-check."""
 
-    def __init__(self, device: int, channel: int = 0, channels: int = 2):
+    def __init__(self, device: int, channel: int = 0, channels: int = 2, queue_seconds: float = 30.0):
+        import queue
         import sounddevice as sd
         self.channel = channel
-        self.stream = sd.InputStream(device=device, samplerate=RATE, channels=channels, dtype="int16",
-                                     blocksize=FRAME)
-        self.stream.start()
+        self.q: "queue.Queue[np.ndarray]" = queue.Queue(maxsize=int(queue_seconds * RATE / FRAME))
+        self.overflows = 0          # blocks PortAudio lost before the callback (status.input_overflow)
+        self.dropped = 0            # blocks the callback could not queue (the daemon fell 30 s behind)
         self.last = None
 
+        def on_block(indata, frames, _time, status):
+            if status.input_overflow:
+                self.overflows += 1
+            try:
+                self.q.put_nowait(indata.copy())
+            except queue.Full:
+                self.dropped += 1
+
+        self.stream = sd.InputStream(device=device, samplerate=RATE, channels=channels, dtype="int16",
+                                     blocksize=FRAME, latency="high", callback=on_block)
+        self.stream.start()
+
     def frame(self) -> np.ndarray:
-        data, overflowed = self.stream.read(FRAME)
-        if overflowed:
-            log.warning("input overflow")
+        import queue
+        try:
+            data = self.q.get(timeout=20)
+        except queue.Empty:
+            raise RuntimeError("no audio from the array for 20 s")
         self.last = data                       # all channels, for diagnostics
         return data[:, self.channel]
+
+    @property
+    def backlog(self) -> int:
+        return self.q.qsize()
+
+    def drain(self) -> None:
+        """Discard what was captured while the assistant itself was talking."""
+        import queue
+        try:
+            while True:
+                self.q.get_nowait()
+        except queue.Empty:
+            pass
+
+    def lost(self) -> int:
+        """Blocks lost since the last call (overflows plus drops); the caller resets the wake model on any."""
+        n = self.overflows + self.dropped
+        self.overflows = self.dropped = 0
+        return n
 
     def close(self):
         self.stream.stop(); self.stream.close()

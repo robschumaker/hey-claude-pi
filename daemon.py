@@ -18,12 +18,14 @@ load_env(os.environ.get("ENV_FILE", "/home/pi/household/.env"))
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
 log = logging.getLogger("voice")
 
+import numpy as np  # noqa: E402
 from voice import audio  # noqa: E402
 from voice.brain import Brain  # noqa: E402
 from voice.brain_cc import ClaudeCodeBrain  # noqa: E402
 from voice import hosted  # noqa: E402
 from voice import cast as cast_out  # noqa: E402
 from voice import web, screen as screen_mod  # noqa: E402
+from voice import ntfy  # noqa: E402
 
 
 def cfg(name: str, default: str) -> str:
@@ -49,8 +51,11 @@ def main() -> int:
                       user=cfg("VOICE_USER", "voice"))
     else:
         log.info("brain: Claude Code on the subscription")
-        brain = ClaudeCodeBrain(model=cfg("VOICE_CC_MODEL", "") or None)
+        brain = ClaudeCodeBrain(model=cfg("VOICE_CC_MODEL", "") or None,
+                                session_hours=float(cfg("VOICE_SESSION_HOURS", "24")))
     web.start()                                        # state for the dashboard overlay, media for casting
+    if hasattr(brain, "new_conversation"):
+        ntfy.start_if_configured(brain)                # text commands from the owner's phone, if set up
     scr = screen_mod.Screen()
     output = cfg("VOICE_OUTPUT", "respeaker")
     if output.startswith("cast:"):
@@ -62,19 +67,37 @@ def main() -> int:
     channel = int(cfg("VOICE_CHANNEL", "0"))
     ears = audio.Ears(inp, channel=channel)
     diag = cfg("VOICE_DIAG", "0") == "1"           # log near misses
-    other = audio.WakeWord(wake_path, wake.threshold)  # both channels are scored; the louder one wins
-    log.info("listening for %s on both channels (recording follows the one that wakes; default %d)", wake.name, channel)
+    # Scoring the other channel too doubles the model cost (33 ms of an 80 ms frame on a Pi 4) and, measured
+    # over 2026-10-24/25, produced half the false wakes and none of the real ones. Off unless asked.
+    both = cfg("VOICE_SCORE_BOTH", "0") == "1"
+    other = audio.WakeWord(wake_path, wake.threshold) if both else None
+    need = int(cfg("VOICE_WAKE_FRAMES", "2"))      # consecutive frames over threshold: one-frame spikes are noise
+    log.info("listening for %s on channel %d%s, %d frames over %.2f", wake.name, channel,
+             " (both channels scored)" if both else "", need, wake.threshold)
+    run = 0
+    heartbeat = time.monotonic()
+    peak = 0.0
     try:
         while True:
-            score = wake.heard(ears.frame())
-            o = other.heard(ears.last[:, 1 - channel])
+            f = ears.frame()
+            if ears.lost():                           # discontinuity: the model's context is garbage now
+                wake.reset(); run = 0
+                if other: other.reset()
+            peak = max(peak, float(np.abs(f).mean()))
+            if time.monotonic() - heartbeat > 300:
+                log.info("heartbeat: peak %.0f, backlog %d frames", peak, ears.backlog)
+                heartbeat = time.monotonic(); peak = 0.0
+            score = wake.heard(f)
+            o = other.heard(ears.last[:, 1 - channel]) if other else 0.0
             if diag and max(score, o) >= 0.1:
                 log.info("scores ch%d=%.2f ch%d=%.2f", channel, score, 1 - channel, o)
-            if max(score, o) < wake.threshold:
+            run = run + 1 if max(score, o) >= wake.threshold else 0
+            if run < need:
                 continue
+            run = 0
             ears.channel = channel if score >= o else 1 - channel
             log.info("wake %.2f on channel %d", max(score, o), ears.channel)
-            other.reset()
+            if other: other.reset()
             wake.reset()
             scr.wake(); web.set_state("quiet")
             if not output.startswith("cast:"):
@@ -97,13 +120,14 @@ def main() -> int:
                         answer = "Sorry, I couldn't reach my brain just now."
                     web.set_state("speaking")
                     tts.say(answer)
+                    ears.drain()                          # our own voice, captured meanwhile
                     web.set_state("quiet")
                 except Exception:                         # recognition or speech failed (network, cast): back to listening
                     log.exception("exchange failed; listening again")
                     break
                 wake.reset()
                 timeout = follow_up
-            web.set_state("idle"); scr.restore()
+            web.set_state("idle"); scr.restore(); ears.drain()
     finally:
         ears.close()
     return 0
