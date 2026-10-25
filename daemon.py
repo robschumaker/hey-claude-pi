@@ -82,6 +82,10 @@ def main() -> int:
     other = audio.WakeWord(wake_path, wake.threshold) if both else None
     need = int(cfg("VOICE_WAKE_FRAMES", "2"))      # consecutive frames over threshold: one-frame spikes are noise
     music_thr = float(cfg("VOICE_WAKE_THRESHOLD_MUSIC", "0.35"))   # music drowns the wake word; listen harder
+    # Measured 2026-10-25: channel 0 is the array's echo-cancelled output (speaker noise at full level leaves it at
+    # its silent floor), channel 1 is nearly raw. Channel 1 scores the wake word better in a quiet room, so it is
+    # the default; while music plays we listen and record on the cancelled channel instead.
+    music_channel = int(cfg("VOICE_CHANNEL_MUSIC", "0"))
     log.info("listening for %s on channel %d%s, %d frames over %.2f", wake.name, channel,
              " (both channels scored)" if both else "", need, wake.threshold)
     run = 0
@@ -89,6 +93,8 @@ def main() -> int:
     peak = 0.0
     try:
         while True:
+            over_music = bool(music and music.playing)
+            ears.channel = music_channel if over_music else channel
             f = ears.frame()
             if ears.lost():                           # discontinuity: the model's context is garbage now
                 wake.reset(); run = 0
@@ -101,13 +107,13 @@ def main() -> int:
             o = other.heard(ears.last[:, 1 - channel]) if other else 0.0
             if diag and max(score, o) >= 0.1:
                 log.info("scores ch%d=%.2f ch%d=%.2f", channel, score, 1 - channel, o)
-            over_music = bool(music and music.playing)
             run = run + 1 if max(score, o) >= (music_thr if over_music else wake.threshold) else 0
             if run < (1 if over_music else need):                 # over music: one frame, lower bar
                 continue
             run = 0
-            ears.channel = channel if score >= o else 1 - channel
-            log.info("wake %.2f on channel %d", max(score, o), ears.channel)
+            if not over_music:
+                ears.channel = channel if score >= o else 1 - channel
+            log.info("wake %.2f on channel %d%s", max(score, o), ears.channel, " over music" if over_music else "")
             if other: other.reset()
             wake.reset()
             scr.wake(); web.set_state("quiet")
