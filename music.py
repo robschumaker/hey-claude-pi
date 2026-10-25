@@ -22,7 +22,8 @@ ONSTATION = re.compile(r"\|>\s+Station \"(.+?)\"")
 
 
 class Pianobar:
-    LEVEL_DB = {n: -27 + 3 * (n - 1) for n in range(1, 11)}      # 1 -> -27 dB ... 10 -> 0 dB
+    LEVEL_DB = {n: -21 + 3 * (n - 1) for n in range(1, 11)}      # 1 -> -21 dB, 8 -> 0 dB, 10 -> +6 dB (Pandora streams sit ~10 dB under full scale)
+    CONTROL = "Pandora"                                           # the softvol control in /etc/asound.conf
 
     def __init__(self, user: str, password: str, level: int = 8, bin_path: str = "pianobar"):
         self.user, self.password, self.bin = user, password, bin_path
@@ -191,7 +192,7 @@ class Pianobar:
         """Instant and clean: an ALSA softvol ("Music") on the shared mixer, not pianobar's keystroke gain."""
         import subprocess
         try:
-            subprocess.run(["amixer", "-q", "-D", "hw:Array", "sset", "Music", "--", f"{self.LEVEL_DB[self.level]}dB"],
+            subprocess.run(["amixer", "-q", "-D", "hw:Array", "sset", self.CONTROL, "--", f"{self.LEVEL_DB[self.level]}dB"],
                            timeout=5, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except Exception as e:
             log.warning("music level: %s", e)
