@@ -101,5 +101,21 @@ def house(what: str = "all") -> dict:
     return hubitat.summary(what)
 
 
+@mcp.tool
+def music(action: str = "status", station: str | None = None) -> str:
+    """Pandora on the kitchen speaker. action: play (with an optional station name, or resumes the last one),
+    pause, stop, next, love, ban, status, stations. Use for anything about music: play some jazz, what is this
+    song, skip, I like this, turn the music off."""
+    import json
+    import urllib.request
+    from voice.web import lan_ip
+    url = os.environ.get("VOICE_WEB", f"http://{lan_ip()}:8766") + "/music"
+    req = urllib.request.Request(url, data=json.dumps({"action": action, "station": station}).encode(), method="POST",
+                                 headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=40) as r:
+        d = json.load(r)
+    return d.get("result") or d.get("error") or "no answer"
+
+
 if __name__ == "__main__":
     mcp.run(show_banner=False)

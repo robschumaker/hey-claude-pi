@@ -26,6 +26,7 @@ from voice import hosted  # noqa: E402
 from voice import cast as cast_out  # noqa: E402
 from voice import web, screen as screen_mod  # noqa: E402
 from voice import ntfy  # noqa: E402
+from voice import music as music_mod  # noqa: E402
 
 
 def cfg(name: str, default: str) -> str:
@@ -57,6 +58,11 @@ def main() -> int:
     web.start()                                        # state for the dashboard overlay, media for casting
     if hasattr(brain, "new_conversation"):
         ntfy.start_if_configured(brain)                # text commands from the owner's phone, if set up
+    music = None
+    if cfg("PANDORA_USER", "") and cfg("PANDORA_PASSWORD", ""):
+        music = music_mod.Pianobar(cfg("PANDORA_USER", ""), cfg("PANDORA_PASSWORD", ""), int(cfg("VOICE_MUSIC_VOLUME_DB", "-6")))
+        web.HANDLERS["music"] = lambda body: music.command(body.get("action", "status"), body.get("station"))
+        log.info("music: Pandora through pianobar, on the speaker; paused during exchanges")
     scr = screen_mod.Screen()
     output = cfg("VOICE_OUTPUT", "respeaker")
     if output.startswith("cast:"):
@@ -101,6 +107,7 @@ def main() -> int:
             if other: other.reset()
             wake.reset()
             scr.wake(); web.set_state("quiet")
+            if music: music.duck()                        # quiet for the exchange, resumed at its end
             if not output.startswith("cast:"):
                 audio.chime(out)
             timeout = 6.0
@@ -129,6 +136,7 @@ def main() -> int:
                 wake.reset()
                 timeout = follow_up
             web.set_state("idle"); scr.restore(); ears.drain()
+            if music: music.unduck()
     finally:
         ears.close()
     return 0

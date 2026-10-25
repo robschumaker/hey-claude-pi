@@ -70,6 +70,67 @@ def summary(what: str = "all") -> dict:
     return {k: v for k, v in out.items() if v}
 
 
+# The kitchen dashboard's System Status tile, reproduced: same rules, same thresholds.
+SWITCH_ON_LABELS = ("Workshop Fan", "Shopvac", "RH Kitchen Fan")
+STALE_DAYS, DOOR_MINUTES, LOW_BATTERY = 5, 5, 10
+
+
+def _clean(label: str) -> str:
+    label = re.sub(r"^(Temperature|Moisture|Motion|Contact|Vibration|Water|Weather)\s*-\s*", "", label, flags=re.I)
+    return re.sub(r"\s+on Hubitat Rock House$", "", label, flags=re.I).strip()
+
+
+def _age_minutes(date: str | None) -> float | None:
+    """Maker API dates look like 2026-10-25T13:02:11+0000."""
+    import datetime as dt
+    if not date:
+        return None
+    try:
+        t = dt.datetime.strptime(date.replace("Z", "+0000"), "%Y-%m-%dT%H:%M:%S%z")
+    except ValueError:
+        return None
+    return (dt.datetime.now(dt.timezone.utc) - t).total_seconds() / 60
+
+
+def alerts() -> list[dict]:
+    """What the System Status tile would show: septic pump on, named switches on, vibration, doors open
+    more than five minutes, batteries under 10%, devices silent for five days or never seen."""
+    out: list[dict] = []
+    devs = devices()
+    septic = next((d for d in devs if "septic" in (d.get("label") or d.get("name") or "").lower() and "power" in (d.get("attributes") or {})), None)
+    if septic and (_num((septic.get("attributes") or {}).get("power")) or 0) > 100:
+        out.append({"name": "Septic Pump", "value": "On"})
+    for d in devs:
+        lbl = d.get("label") or d.get("name") or ""
+        a = d.get("attributes") or {}
+        name = _clean(lbl)
+        age = _age_minutes(d.get("date"))
+        if name in SWITCH_ON_LABELS:
+            if a.get("switch") == "on":
+                out.append({"name": name, "value": "On"})
+            continue
+        if a.get("shock") == "detected":
+            out.append({"name": name, "value": "Vibration"})
+        if a.get("contact") == "open" and age is not None and age >= DOOR_MINUTES:
+            out.append({"name": name, "value": "Open"})
+        batt = _num(a.get("battery"))
+        if batt is not None and batt < LOW_BATTERY:
+            out.append({"name": name, "value": f"battery {batt:.0f}%"})
+        if len(a) > 2 and "EmporiaVue" not in lbl:
+            if age is None:
+                out.append({"name": name, "value": "Unresponsive"})
+            elif age >= STALE_DAYS * 1440:
+                out.append({"name": name, "value": f"silent {int(age // 1440)} days"})
+    return out
+
+
+def say_alerts() -> str:
+    rows = alerts()
+    if not rows:
+        return "All clear."
+    return "; ".join(f"{r['name']}: {r['value']}" for r in rows)
+
+
 def say_temperatures() -> str:
     rows = summary("temperatures")["temperatures"]
     return "Temperatures: " + "; ".join(f"{r['place']} {r['temp_c']}°C" + (f", {r['humidity_pct']:.0f}% humidity" if r["humidity_pct"] is not None else "") for r in rows) if rows else "No temperature sensors reported."

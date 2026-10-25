@@ -80,6 +80,27 @@ class Listener:
     def start(self) -> None:
         threading.Thread(target=self._run, daemon=True, name="ntfy").start()
         log.info("ntfy: listening on %s/%s, replies to %s", self.server, self.command_topic, self.reply_topic)
+        when = os.environ.get("NTFY_MORNING_TIME", "07:00").strip()
+        if when:
+            threading.Thread(target=self._morning, args=(when,), daemon=True, name="ntfy-morning").start()
+            log.info("ntfy: morning status every day at %s", when)
+
+    def _morning(self, when: str) -> None:
+        """Once a day, what the dashboard's System Status tile shows, on the reply topic."""
+        import datetime as dt
+        hh, mm = (int(x) for x in when.split(":"))
+        while True:
+            now = dt.datetime.now()
+            nxt = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+            if nxt <= now:
+                nxt += dt.timedelta(days=1)
+            time.sleep((nxt - now).total_seconds())
+            try:
+                text = hubitat.say_alerts()
+                self.publish(text, title="Morning status")
+                log.info("ntfy: morning status sent: %s", text[:80])
+            except Exception:
+                log.exception("ntfy: morning status failed")
 
     def publish(self, text: str, title: str = "Claude") -> None:
         req = urllib.request.Request(f"{self.server}/{self.reply_topic}", data=text.encode(), method="POST",

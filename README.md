@@ -59,9 +59,17 @@ With the `NTFY_*` settings filled in, the daemon subscribes to the command topic
 
 A message without a valid code is matched against a short allow-list of readings that give nothing away about who is home (`NTFY_OPEN_QUERIES`, default temperatures and plant moisture) and answered by code that reads the sensors directly, formatted by code. Such a message never reaches the brain, so it cannot be talked into anything else; a message that matches nothing is dropped without a reply, and open queries are limited to twenty an hour. Doors, leaks, power, lights and everything the brain can do stay behind the code. On a public ntfy server the topics are only as private as their names, so keep them long and random; the code is what proves it is you.
 
+## Music
+
+With `PANDORA_USER` and `PANDORA_PASSWORD` set, the daemon runs pianobar as a child process and the brain gets a `music` tool: play a station by name, pause, stop, next, love, ban, status, stations. On the wake word the music pauses; when the exchange ends it resumes. Both pianobar and the daemon play through `array`, an ALSA dmix on the ReSpeaker's speaker (`/etc/asound.conf`), and a WirePlumber rule keeps PipeWire off the array so nothing contends for it; pianobar's `~/.libao` names that device. The array's echo cancellation hears the wake word over the music because the music comes out of its own amplifier.
+
+## Morning status
+
+With `NTFY_MORNING_TIME` set, the reply topic gets one message a day with what the kitchen dashboard's System Status tile shows, by the same rules: septic pump running, named switches left on, vibration, doors open more than five minutes, batteries under ten percent, devices silent for five days. "All clear" otherwise.
+
 ## Tools
 
-`mcp.json` lists the MCP servers the brain gets. The example attaches `store_mcp.py`, the household's own memory and lists server (shared memory, shopping list, notes between the family's assistants, the weather at the house from Open-Meteo in metric, and `house`, live readings from a Hubitat hub: room temperatures, doors, leak sensors, plant soil moisture, power per circuit, lights, low batteries). Replace it with whatever servers your house has; the brain's prompt in `brain.py` describes the tools in plain words for speech. Bash, file editing and file reading are disallowed for the voice brain on purpose.
+`mcp.json` lists the MCP servers the brain gets. The example attaches `store_mcp.py`, the household's own memory and lists server (shared memory, shopping list, notes between the family's assistants, the weather at the house from Open-Meteo in metric, `house`, live readings from a Hubitat hub: room temperatures, doors, leak sensors, plant soil moisture, power per circuit, lights, low batteries; and `music`, which reaches the daemon's pianobar over the daemon's local web port). Replace it with whatever servers your house has; the brain's prompt in `brain.py` describes the tools in plain words for speech. Bash, file editing and file reading are disallowed for the voice brain on purpose.
 
 ## Lessons that cost time
 

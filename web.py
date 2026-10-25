@@ -17,6 +17,7 @@ import time
 log = logging.getLogger("voice.web")
 HERE = os.path.dirname(os.path.abspath(__file__))
 STATE = {"state": "idle", "since": time.time()}
+HANDLERS: dict = {}          # name -> callable(dict) -> str; registered by the daemon (music)
 MEDIA_DIR = tempfile.mkdtemp(prefix="voice-media-")
 
 
@@ -59,6 +60,22 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                 with open(fp, "rb") as f:
                     return self._send(200, f.read(), "audio/wav")
         self._send(404, b"not found", "text/plain")
+
+    def do_POST(self):
+        path = self.path.split("?", 1)[0]
+        name = path.strip("/")
+        if name not in HANDLERS:
+            return self._send(404, b"not found", "text/plain")
+        if self.client_address[0] not in ("127.0.0.1", self.server.server_address[0]):   # this Pi only
+            return self._send(403, b"local only", "text/plain")
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+            body = json.loads(self.rfile.read(n) or b"{}")
+            out = HANDLERS[name](body)
+            self._send(200, json.dumps({"result": out}).encode(), "application/json")
+        except Exception as e:
+            log.exception("web: %s failed", name)
+            self._send(500, json.dumps({"error": str(e)}).encode(), "application/json")
 
 
 class _Server(socketserver.ThreadingTCPServer):

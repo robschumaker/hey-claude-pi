@@ -26,6 +26,11 @@ def find_device(name_part: str) -> tuple[int, int]:
                 inp = i
             if out is None and d["max_output_channels"] > 0:
                 out = i
+    shared = os.environ.get("VOICE_OUTPUT_PCM", "array")      # dmix on the array, shared with pianobar
+    for i, d in enumerate(sd.query_devices()):
+        if d["name"] == shared and d["max_output_channels"] > 0:
+            out = i
+            break
     if inp is None or out is None:
         raise RuntimeError(f"no audio device matching {name_part!r}; devices: "
                            + "; ".join(d["name"] for d in sd.query_devices()))
