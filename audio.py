@@ -218,6 +218,18 @@ class Voice:
         sd.play(audio, samplerate=RATE, device=self.device, blocking=True)
 
 
+def set_volume(percent: int | None = None, card: str = "hw:Array", control: str = "PCM") -> None:
+    """Set the array's speaker level. The XVF3800 comes up at 62% after every power-up or firmware reboot,
+    so this runs after the device is found and again before each reply. Cheap (one amixer call)."""
+    import subprocess
+    pct = int(percent if percent is not None else os.environ.get("VOICE_SPEAKER_VOLUME", "100"))
+    try:
+        subprocess.run(["amixer", "-q", "-D", card, "sset", control, f"{pct}%"], check=False, timeout=5,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception as e:                                # missing amixer or card: say so once, keep going
+        log.warning("set_volume: %s", e)
+
+
 def chime(output_device: int, notes=((660.0, 110), (990.0, 160)), gain: float = 0.9) -> None:
     """Acknowledgement: a short rising two-tone right after the wake word, meaning "heard you, go ahead".
     Blocking, so recording starts only once it has finished."""
@@ -227,4 +239,5 @@ def chime(output_device: int, notes=((660.0, 110), (990.0, 160)), gain: float = 
         n = int(RATE * ms / 1000)
         parts.append(np.sin(2 * np.pi * hz * np.arange(n) / RATE) * np.hanning(n))
     tone = (gain * np.concatenate(parts) * 32767).astype(np.int16)
+    set_volume()
     sd.play(tone, samplerate=RATE, device=output_device, blocking=True)

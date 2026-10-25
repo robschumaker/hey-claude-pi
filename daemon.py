@@ -35,6 +35,7 @@ def cfg(name: str, default: str) -> str:
 def main() -> int:
     inp, out = audio.find_device(cfg("VOICE_DEVICE", "XVF3800"))
     log.info("audio in=%d out=%d", inp, out)
+    audio.set_volume()                                 # the array forgets its level on every reset
     wake_path = cfg("VOICE_WAKE_MODEL", "/home/pi/voice-models/hey_claude.onnx")
     wake = audio.WakeWord(wake_path, float(cfg("VOICE_WAKE_THRESHOLD", "0.5")))
     if hosted.available():

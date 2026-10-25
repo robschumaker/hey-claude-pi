@@ -45,7 +45,7 @@ Layout: the code is a Python package named `voice`, so clone this repo into a di
 ## Sound
 
 - On the wake word the speaker plays a short rising two-tone and recording starts the moment it ends. That is the cue to talk.
-- The service sets the array's amplifier to full volume at start (`amixer -D hw:Array sset PCM 100%`). On the XVF3800 the control called `Headset` is the microphone gain, not the speaker; leave it alone.
+- The daemon sets the array's amplifier to `VOICE_SPEAKER_VOLUME` (default 100%) once it has found the array and again before every reply, because the XVF3800 comes back at 62% after every power-up, USB re-enumeration or firmware reboot. On the XVF3800 the control called `Headset` is the microphone gain, not the speaker; leave it alone.
 - Deepgram's renders peak at about a third of full scale, so replies are normalised before playback. `VOICE_GAIN` in `.env` scales further.
 - Voice: `VOICE_DEEPGRAM_TTS`. `voice/audition.py` fetches Deepgram's current Aura list (`--list`) and speaks a sample from each name you give it through the speaker, so you can choose by ear.
 

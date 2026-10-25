@@ -66,6 +66,8 @@ class DeepgramVoice:
         t = time.monotonic()
         audio = self.render(text)
         log.info("deepgram tts %.1fs for %d chars", time.monotonic() - t, len(text))
+        from voice.audio import set_volume
+        set_volume()
         sd.play(loud(audio), samplerate=RATE, device=self.device, blocking=True)
 
 
