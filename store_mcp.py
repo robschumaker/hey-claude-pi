@@ -3,12 +3,12 @@ when Claude runs on the owner's subscription instead of an API key). Run with th
 has FastMCP: venv/bin/python voice/store_mcp.py. Writes are stamped voice/claude-voice.
 """
 import os
-import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from fastmcp import FastMCP  # noqa: E402
 from store import Store  # noqa: E402
+from voice import hubitat  # noqa: E402
 
 USER = os.environ.get("VOICE_USER", "voice")
 ASSISTANT = "claude-voice"
@@ -91,31 +91,6 @@ def weather(days: int = 3) -> dict:
                       "sunrise": dy["sunrise"][i][-5:], "sunset": dy["sunset"][i][-5:]} for i in range(len(dy["time"]))]}
 
 
-def _hubitat_devices() -> list[dict]:
-    import json
-    import urllib.request
-    base, token = os.environ.get("HUBITAT_URL"), os.environ.get("HUBITAT_TOKEN")
-    if not base or not token:
-        raise RuntimeError("Hubitat is not configured (HUBITAT_URL and HUBITAT_TOKEN)")
-    with urllib.request.urlopen(f"{base}/devices/all?access_token={token}", timeout=8) as r:
-        return json.load(r)
-
-
-def _place(name: str) -> str:
-    """'Temperature - Barn' -> 'Barn'; 'Rock House Contact - Front door' -> 'Rock House front door'."""
-    house = "Rock House " if name.startswith("Rock House ") else ""
-    rest = name[len(house):]
-    rest = rest.split("-", 1)[-1].strip() if " - " in rest else rest
-    return (house + (rest[0].lower() + rest[1:] if house and rest else rest)).strip()
-
-
-def _num(v):
-    try:
-        return round(float(v), 1)
-    except (TypeError, ValueError):
-        return None
-
-
 @mcp.tool
 def house(what: str = "all") -> dict:
     """Live readings from the house's sensors and switches (the same Hubitat telemetry the kitchen dashboard
@@ -123,44 +98,7 @@ def house(what: str = "all") -> dict:
     Temperatures are Celsius, power in watts, plant moisture in percent. Use for anything about the state of
     the house right now: how warm a room is, whether a door is open, leaks, which lights are on, what is
     drawing power, dry plants, low batteries."""
-    want = (what or "all").strip().lower()
-    out: dict = {"temperatures": [], "doors": [], "water": [], "plants": [], "power": [], "lights": [], "low_batteries": []}
-    for d in _hubitat_devices():
-        name = (d.get("label") or d.get("name") or "").strip()
-        if "on Hubitat Rock House" in name:               # the second house's hub, mirrored into this one
-            name = "Rock House " + re.sub(r"\s*on Hubitat Rock House\s*$", "", name).replace("RH ", "", 1)
-        a = d.get("attributes") or {}
-        kind = (d.get("type") or "").lower()
-        low = name.lower()
-        if want not in ("all", "temperatures", "doors", "water", "plants", "power", "lights", "batteries") and want not in low:
-            continue
-        batt = _num(a.get("battery"))
-        if batt is not None and batt <= 20:
-            out["low_batteries"].append({"device": name, "battery_pct": batt})
-        if "soil moisture" in kind or low.startswith("moisture -"):
-            out["plants"].append({"plant": _place(name), "moisture_pct": _num(a.get("humidity")),
-                                  "temp_c": _num(a.get("temperature"))})
-        elif "moisture sens" in kind or "water" in a:
-            out["water"].append({"sensor": _place(name), "state": a.get("water")})
-        elif "contact" in a:
-            out["doors"].append({"door": _place(name), "state": a.get("contact"),
-                                 "temp_c": _num(a.get("temperature"))})
-        elif "circuit" in kind:
-            label = re.sub(r"^Emp-\d+-", "", name)
-            label = re.sub(r"\s*\([^)]*\)\s*$", "", label)
-            out["power"].append({"circuit": label, "watts": _num(a.get("power"))})
-        elif "switch" in a:
-            out["lights"].append({"device": name.replace("Virtual - ", ""), "state": a.get("switch"),
-                                  "level_pct": _num(a.get("level")) if a.get("level") is not None else None,
-                                  "watts": _num(a.get("power")) if a.get("power") is not None else None})
-        elif a.get("temperature") is not None:
-            out["temperatures"].append({"place": _place(name), "temp_c": _num(a.get("temperature")),
-                                        "humidity_pct": _num(a.get("humidity"))})
-    if want in out:
-        return {want: out[want]}
-    if want == "batteries":
-        return {"low_batteries": out["low_batteries"]}
-    return {k: v for k, v in out.items() if v}
+    return hubitat.summary(what)
 
 
 if __name__ == "__main__":

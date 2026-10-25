@@ -5,6 +5,12 @@ A message on NTFY_COMMAND_TOPIC must contain a six-digit code anywhere in its te
 "483920 is the barn door closed". The code must match NTFY_TOTP_SECRET within one 30 s step either way,
 may not be reused, and after five bad codes in ten minutes the topic is ignored for ten minutes. The
 rest of the text goes to the brain like a spoken question and the reply is published to NTFY_REPLY_TOPIC.
+
+Open queries: a message without a valid code is matched against a short allow-list of harmless readings
+(NTFY_OPEN_QUERIES, default "temperatures,plants") and answered by code that reads the sensors directly.
+Such a message never reaches the brain, so it cannot be talked into anything else; anything unmatched is
+dropped without a reply, and open queries are limited to 20 an hour. Doors, leaks, power, lights and
+everything the brain can do stay behind the code: they say whether anyone is home.
 Topics on a public ntfy server are readable by anyone who guesses their names, so use long random ones.
 Standard library only.
 """
@@ -23,8 +29,14 @@ import time
 import urllib.parse
 import urllib.request
 
+from voice import hubitat
+
 log = logging.getLogger("voice.ntfy")
 CODE = re.compile(r"(?<!\d)(\d{6})(?!\d)")
+OPEN = {   # category -> (what the message must mention, how to answer). Nothing else is ever open.
+    "temperatures": (re.compile(r"\b(temp|temps|temperature|temperatures|warm|cold|hot|humidity)\b", re.I), hubitat.say_temperatures),
+    "plants": (re.compile(r"\b(plant|plants|moisture|soil|planter|planters|dry)\b", re.I), hubitat.say_plants),
+}
 
 
 def totp(secret_b32: str, step: int) -> str:
@@ -61,6 +73,9 @@ class Listener:
         self.command_topic, self.reply_topic = command_topic, reply_topic
         self.auth = Authenticator(secret_b32)
         self.since = str(int(time.time()))
+        wanted = [w.strip() for w in os.environ.get("NTFY_OPEN_QUERIES", "temperatures,plants").split(",") if w.strip()]
+        self.open = {k: OPEN[k] for k in wanted if k in OPEN}
+        self.open_times: list[float] = []
 
     def start(self) -> None:
         threading.Thread(target=self._run, daemon=True, name="ntfy").start()
@@ -97,7 +112,7 @@ class Listener:
             return
         m = CODE.search(text)
         if not m or not self.auth.check(m.group(1)):
-            log.warning("ntfy: rejected a message (no valid code)")
+            self._open_query(text)
             return
         ask = (text[:m.start()] + text[m.end():]).strip(" :,-") or "status"
         log.info("ntfy: command %r", ask)
@@ -113,6 +128,25 @@ class Listener:
             self.publish(answer)
         except Exception:
             log.exception("ntfy: publish failed")
+
+
+    def _open_query(self, text: str) -> None:
+        """No valid code: answer only from the allow-list, by code, never through the brain."""
+        now = time.time()
+        self.open_times = [t for t in self.open_times if now - t < 3600]
+        if len(self.open_times) >= 20:
+            log.warning("ntfy: open-query limit reached; dropping")
+            return
+        for name, (pattern, answer) in self.open.items():
+            if pattern.search(text):
+                self.open_times.append(now)
+                log.info("ntfy: open query %s", name)
+                try:
+                    self.publish(answer())
+                except Exception:
+                    log.exception("ntfy: open query failed")
+                return
+        log.warning("ntfy: dropped a message (no valid code, not an open query)")
 
 
 def start_if_configured(brain) -> Listener | None:

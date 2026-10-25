@@ -55,7 +55,9 @@ One Claude Code process stays warm; it is restarted after five idle minutes to g
 
 ## Phone commands
 
-With the `NTFY_*` settings filled in, the daemon subscribes to the command topic. A message such as `483920 is the barn door open` is accepted when the six-digit code matches the enrolled authenticator within one 30 s step, has not been used before, and fewer than five bad codes arrived in the last ten minutes; the rest of the text goes to the brain and the answer is published on the reply topic, which the phone's ntfy app subscribes to. `scripts/totp-enrol.py` makes the secret, the topics and the QR code to scan. On a public ntfy server the topics are only as private as their names, so keep them long and random; the code is what proves it is you.
+With the `NTFY_*` settings filled in, the daemon subscribes to the command topic. A message such as `483920 is the barn door open` is accepted when the six-digit code matches the enrolled authenticator within one 30 s step, has not been used before, and fewer than five bad codes arrived in the last ten minutes; the rest of the text goes to the brain and the answer is published on the reply topic, which the phone's ntfy app subscribes to. `scripts/totp-enrol.py` makes the secret, the topics and the QR code to scan.
+
+A message without a valid code is matched against a short allow-list of readings that give nothing away about who is home (`NTFY_OPEN_QUERIES`, default temperatures and plant moisture) and answered by code that reads the sensors directly, formatted by code. Such a message never reaches the brain, so it cannot be talked into anything else; a message that matches nothing is dropped without a reply, and open queries are limited to twenty an hour. Doors, leaks, power, lights and everything the brain can do stay behind the code. On a public ntfy server the topics are only as private as their names, so keep them long and random; the code is what proves it is you.
 
 ## Tools
 
