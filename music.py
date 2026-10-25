@@ -17,8 +17,8 @@ import time
 log = logging.getLogger("voice.music")
 ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]|\r")
 STATION = re.compile(r"^\s*(\d+)\)\s+(?:[qQS]\s+)?(.+?)\s*$")
-NOWPLAYING = re.compile(r'^\|>\s+"(.+?)" by "(.+?)" on "(.+?)"')
-ONSTATION = re.compile(r"^\|>\s+Station \"(.+?)\"")
+NOWPLAYING = re.compile(r'\|>\s+"(.+?)" by "(.+?)" on "(.+?)"')
+ONSTATION = re.compile(r"\|>\s+Station \"(.+?)\"")
 
 
 class Pianobar:
@@ -48,43 +48,59 @@ class Pianobar:
         self.stations, self.song = [], {}
         self.stations_ready.clear()
         self.proc = subprocess.Popen([self.bin], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                     text=True, bufsize=1)
+                                     bufsize=0)
         threading.Thread(target=self._reader, daemon=True, name="pianobar-out").start()
         log.info("pianobar started pid %d", self.proc.pid)
 
     def _reader(self) -> None:
+        """pianobar's prompt "[?] Select station:" has no newline, so read in chunks, not lines."""
         proc = self.proc
-        for raw in proc.stdout:
-            line = ANSI.sub("", raw).strip()
+        fd = proc.stdout.fileno()
+        buf = ""
+        while True:
+            chunk = os.read(fd, 4096).decode("utf-8", "replace")
+            if not chunk:
+                break
+            buf += chunk
+            while "\n" in buf or "\r" in buf:
+                i = min(j for j in (buf.find("\n"), buf.find("\r")) if j >= 0)
+                line, buf = buf[:i], buf[i + 1:]
+                self._line(ANSI.sub("", line).strip())
+            if "Select station" in ANSI.sub("", buf):
+                self.stations_ready.set()
+                buf = ""
+        self.playing = False
+        log.info("pianobar exited")
+
+    def _line(self, line: str) -> None:
+        if True:
             if not line:
-                continue
+                return
             m = STATION.match(line)
             if m:
                 i, name = int(m.group(1)), m.group(2)
                 if i == len(self.stations):
                     self.stations.append(name)
-                continue
+                return
             if "Select station" in line:
                 self.stations_ready.set()
-                continue
-            m = NOWPLAYING.match(line)
+                return
+            m = NOWPLAYING.search(line)
             if m:
                 self.song = {"title": m.group(1), "artist": m.group(2), "album": m.group(3), "station": self.last_station}
                 self.playing = True
                 log.info("pianobar: %s by %s", m.group(1), m.group(2))
-                continue
-            m = ONSTATION.match(line)
+                return
+            m = ONSTATION.search(line)
             if m:
                 self.last_station = m.group(1)
-                continue
+                return
             if "Error" in line or "Login" in line or "(i)" in line:
                 log.info("pianobar: %s", line[:120])
-        self.playing = False
-        log.info("pianobar exited")
 
     def _send(self, keys: str) -> None:
         if self.proc and self.proc.poll() is None:
-            self.proc.stdin.write(keys)
+            self.proc.stdin.write(keys.encode())
             self.proc.stdin.flush()
 
     def _alive(self) -> bool:
