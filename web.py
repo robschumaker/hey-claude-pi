@@ -81,7 +81,9 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         name = path.strip("/")
         if name not in HANDLERS:
             return self._send(404, b"not found", "text/plain")
-        if self.client_address[0] not in ("127.0.0.1", self.server.server_address[0]):   # this Pi only
+        src = self.client_address[0]
+        if src not in ("127.0.0.1", self.server.server_address[0]) and not src.startswith("172.30.32."):
+            # this Pi only; 172.30.32.x is Home Assistant Core and the other add-ons on the Supervisor bridge
             return self._send(403, b"local only", "text/plain")
         try:
             n = int(self.headers.get("Content-Length") or 0)

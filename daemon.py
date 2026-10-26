@@ -16,6 +16,8 @@ from voice.env import load_env  # noqa: E402
 
 load_env(os.environ.get("ENV_FILE", "/home/pi/household/.env"))
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
+import re
+WAKE_PHRASE = re.compile(r"(hey|hay|a|hi|ok|okay)?[,.!]?\s*(claude|cloyd|clod|claud|clyde|cloud|klaud)[.!?]*")
 log = logging.getLogger("voice")
 
 import numpy as np  # noqa: E402
@@ -27,6 +29,8 @@ from voice import cast as cast_out  # noqa: E402
 from voice import web, screen as screen_mod  # noqa: E402
 from voice import ntfy  # noqa: E402
 from voice import music as music_mod  # noqa: E402
+from voice import timers as timers_mod  # noqa: E402
+STOP_WORDS = re.compile(r"(please\s+)?(stop|stop it|stop that|cancel|cancel (it|that|the timer)|enough|quiet|be quiet|silence|shut up|turn (it|that) off)[.!]*(\s*please)?[.!]*")
 
 
 def cfg(name: str, default: str) -> str:
@@ -57,14 +61,19 @@ def main() -> int:
         brain = ClaudeCodeBrain(model=cfg("VOICE_CC_MODEL", "") or None,
                                 session_hours=float(cfg("VOICE_SESSION_HOURS", "24")))
     web.start()                                        # state for the dashboard overlay, media for casting
+    phone = None
     if hasattr(brain, "new_conversation"):
-        ntfy.start_if_configured(brain)                # text commands from the owner's phone, if set up
+        phone = ntfy.start_if_configured(brain)        # text commands from the owner's phone, if set up
     music = None
     if cfg("PANDORA_USER", "") and cfg("PANDORA_PASSWORD", ""):
         music = music_mod.Pianobar(cfg("PANDORA_USER", ""), cfg("PANDORA_PASSWORD", ""), int(cfg("VOICE_MUSIC_LEVEL", "8")))
         web.HANDLERS["music"] = lambda body: music.command(body.get("action", "status"), body.get("station"))
         web.EXTRA["music"] = music.state
+        # (the old-thumbs-up ntfy watcher of 2026-10-26 was retired the same day once the removal path was proven)
         log.info("music: Pandora through pianobar, on the speaker; paused during exchanges")
+    timers = timers_mod.Timers(out)
+    web.HANDLERS["timer"] = timers.command
+    web.EXTRA["timers"] = timers.state
     scr = screen_mod.Screen()
     output = cfg("VOICE_OUTPUT", "respeaker")
     if output.startswith("cast:"):
@@ -82,6 +91,7 @@ def main() -> int:
     other = audio.WakeWord(wake_path, wake.threshold) if both else None
     need = int(cfg("VOICE_WAKE_FRAMES", "2"))      # consecutive frames over threshold: one-frame spikes are noise
     music_thr = float(cfg("VOICE_WAKE_THRESHOLD_MUSIC", "0.35"))   # music drowns the wake word; listen harder
+    sure_thr = float(cfg("VOICE_WAKE_SURE", "0.9"))                 # a single frame at or above this wakes on its own
     # Measured 2026-10-25: channel 0 is the array's echo-cancelled output (speaker noise at full level leaves it at
     # its silent floor), channel 1 is nearly raw. Channel 1 scores the wake word better in a quiet room, so it is
     # the default; while music plays we listen and record on the cancelled channel instead.
@@ -89,6 +99,11 @@ def main() -> int:
     log.info("listening for %s on channel %d%s, %d frames over %.2f", wake.name, channel,
              " (both channels scored)" if both else "", need, wake.threshold)
     run = 0
+    debug_dir = cfg("VOICE_WAKE_DEBUG_DIR", "")       # set to a folder to save near-miss audio (both channels)
+    if debug_dir:
+        os.makedirs(debug_dir, exist_ok=True)
+    ring: list = []
+    last_dump = 0.0
     heartbeat = time.monotonic()
     peak = 0.0
     try:
@@ -96,9 +111,10 @@ def main() -> int:
             over_music = bool(music and music.playing)
             ears.channel = music_channel if over_music else channel
             f = ears.frame()
-            if ears.lost():                           # discontinuity: the model's context is garbage now
-                wake.reset(); run = 0
-                if other: other.reset()
+            lost = ears.lost()
+            if lost:                                  # discontinuity: distrust the current run, but keep the model's context
+                log.info("audio: %d blocks lost (overflow or backlog)", lost)
+                run = 0
             peak = max(peak, float(np.abs(f).mean()))
             if time.monotonic() - heartbeat > 300:
                 log.info("heartbeat: peak %.0f, backlog %d frames", peak, ears.backlog)
@@ -107,8 +123,25 @@ def main() -> int:
             o = other.heard(ears.last[:, 1 - channel]) if other else 0.0
             if diag and max(score, o) >= 0.1:
                 log.info("scores ch%d=%.2f ch%d=%.2f", channel, score, 1 - channel, o)
+            if debug_dir:                                 # keep 2 s of both channels; dump near misses for offline tuning
+                ring.append(ears.last.copy())
+                if len(ring) > 25:
+                    ring.pop(0)
+                dump_all = len(ring) == 25 and os.path.exists(os.path.join(debug_dir, "ALL")) and time.monotonic() - last_dump >= 2.0
+                if (max(score, o) >= 0.1 and time.monotonic() - last_dump > 3) or dump_all:
+                    last_dump = time.monotonic()
+                    try:
+                        import wave
+                        fn = os.path.join(debug_dir, time.strftime("%Y%m%d-%H%M%S") + f"_ch{channel}{score:.2f}_ch{1 - channel}{o:.2f}.wav")
+                        with wave.open(fn, "wb") as w:
+                            w.setnchannels(ears.last.shape[1]); w.setsampwidth(2); w.setframerate(audio.RATE)
+                            w.writeframes(np.concatenate(ring).astype(np.int16).tobytes())
+                        log.info("wake debug: saved %s", os.path.basename(fn))
+                    except Exception as e:
+                        log.warning("wake debug save failed: %s", e)
             run = run + 1 if max(score, o) >= (music_thr if over_music else wake.threshold) else 0
-            if run < (1 if over_music else need):                 # over music: one frame, lower bar
+            sure = max(score, o) >= sure_thr                          # one very confident frame is enough (2026-10-26: a 1.00 then 0.35 was being dropped)
+            if run < (1 if over_music else need) and not sure:        # over music: one frame, lower bar
                 continue
             run = 0
             if not over_music:
@@ -117,7 +150,12 @@ def main() -> int:
             if other: other.reset()
             wake.reset()
             scr.wake(); web.set_state("quiet")
+            if timers.ringing:                            # a wake while the timer rings: that is the "stop"
+                log.info("timer: %s", timers.stop())
+                web.set_state("idle"); scr.restore(); ears.drain()
+                continue
             if music: music.duck()                        # quiet for the exchange, resumed at its end
+            ears.channel = channel                        # music is paused now: record on the normal channel
             if not output.startswith("cast:"):
                 audio.chime(out)
             timeout = 6.0
@@ -131,6 +169,20 @@ def main() -> int:
                     heard = stt.text(clip)
                     if not heard:
                         break
+                    if STOP_WORDS.fullmatch(heard.strip().lower()):    # "stop": the running thing stops, no brain involved
+                        if timers.busy:
+                            said = timers.stop()
+                        elif music and music.playing or (music and music.ducked):
+                            said = music.stop()
+                        else:
+                            said = "Nothing is running."
+                        log.info("stop: %s", said)
+                        web.set_state("speaking"); tts.say(said); ears.drain(); web.set_state("quiet")
+                        break
+                    if WAKE_PHRASE.fullmatch(heard.strip().lower()):   # "hey Claude" again inside the follow-up window: not a question
+                        log.info("wake phrase heard as speech; listening for the question")
+                        timeout = 6.0
+                        continue
                     try:
                         answer = brain.reply(heard)
                     except Exception:                     # Claude failed: say so, keep going
@@ -140,6 +192,8 @@ def main() -> int:
                     tts.say(answer)
                     ears.drain()                          # our own voice, captured meanwhile
                     web.set_state("quiet")
+                    if music and music.playing:           # the reply started or resumed music: no follow-up window,
+                        break                             # or the song's lyrics become the next question (2026-10-26)
                 except Exception:                         # recognition or speech failed (network, cast): back to listening
                     log.exception("exchange failed; listening again")
                     break

@@ -76,6 +76,7 @@ class Listener:
         wanted = [w.strip() for w in os.environ.get("NTFY_OPEN_QUERIES", "temperatures,plants").split(",") if w.strip()]
         self.open = {k: OPEN[k] for k in wanted if k in OPEN}
         self.open_times: list[float] = []
+        self.nudge_at = 0.0
 
     def start(self) -> None:
         threading.Thread(target=self._run, daemon=True, name="ntfy").start()
@@ -103,6 +104,7 @@ class Listener:
                 log.exception("ntfy: morning status failed")
 
     def publish(self, text: str, title: str = "Claude") -> None:
+        log.info("ntfy: publishing to the reply topic: %r", text[:60])       # the only outbound post this daemon makes
         req = urllib.request.Request(f"{self.server}/{self.reply_topic}", data=text.encode(), method="POST",
                                      headers={"Title": title, "Content-Type": "text/plain; charset=utf-8"})
         with urllib.request.urlopen(req, timeout=15):
@@ -128,12 +130,15 @@ class Listener:
 
     def _handle(self, ev: dict) -> None:
         text = (ev.get("message") or "").strip()
+        if text.lower() == "triggered":                 # an empty publish on the command topic: not a command, never counted
+            log.warning("ntfy: a 'triggered' message arrived on the command topic (id %s); ignored", ev.get("id"))
+            return
         if time.time() - float(ev.get("time", 0)) > 120:
             log.info("ntfy: ignoring a message older than two minutes")
             return
         m = CODE.search(text)
         if not m or not self.auth.check(m.group(1)):
-            self._open_query(text)
+            self._open_query(text, had_code=bool(m))
             return
         ask = (text[:m.start()] + text[m.end():]).strip(" :,-") or "status"
         log.info("ntfy: command %r", ask)
@@ -151,7 +156,7 @@ class Listener:
             log.exception("ntfy: publish failed")
 
 
-    def _open_query(self, text: str) -> None:
+    def _open_query(self, text: str, had_code: bool = False) -> None:
         """No valid code: answer only from the allow-list, by code, never through the brain."""
         now = time.time()
         self.open_times = [t for t in self.open_times if now - t < 3600]
@@ -168,6 +173,16 @@ class Listener:
                     log.exception("ntfy: open query failed")
                 return
         log.warning("ntfy: dropped a message (no valid code, not an open query)")
+        # Owner's preference (2026-10-26): say why instead of silence. At most one nudge per ten minutes, so a
+        # stranger who guesses the topic learns nothing beyond "there is a code", and cannot make it chatter.
+        if now - self.nudge_at >= 600:
+            self.nudge_at = now
+            try:
+                self.publish("That code didn't check out. Send a fresh six-digit code from Authenticator with your message."
+                             if had_code else
+                             "No code in that message. Put your six-digit Authenticator code anywhere in the text and send it again.")
+            except Exception:
+                log.exception("ntfy: nudge failed")
 
 
 def start_if_configured(brain) -> Listener | None:

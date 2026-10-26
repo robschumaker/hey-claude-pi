@@ -107,7 +107,14 @@ class WakeWord:
         return self.model.predict(frame)[self.name]
 
     def reset(self):
-        self.model.reset()
+        """Forget the wake word just heard without blinding the model. openWakeWord's own reset() refills its
+        feature buffer with embeddings of random noise, so for the next ~4 s of real audio every score is near 0
+        (measured 2026-10-26: a "hey Claude" 2 s after an exchange scored 0.00 live and 0.92 offline). Instead,
+        scroll the wake word out of the 16-frame feature window with 1.6 s of silence and clear the predictions."""
+        for _ in range(20):
+            self.model.predict(np.zeros(FRAME, dtype=np.int16))
+        for buf in self.model.prediction_buffer.values():
+            buf.clear()
 
 
 class SpeechDetector:
@@ -224,6 +231,7 @@ class Voice:
 
 
 VOICE_LEVEL_DB = {n: -2 * (10 - n) for n in range(1, 11)}      # assistant voice: 10 -> 0 dB, 7 -> -6 dB, 1 -> -18 dB
+VOICE_SOFTVOL_MAX_STEP = 37                                     # -3 dB: the loudest the USB-powered amplifier can take without tripping the Pi
 
 
 def _amixer(*args) -> bool:
@@ -241,7 +249,13 @@ def set_volume(percent: int | None = None) -> None:
     own "Music" control, so neither changes the other. Cheap; called before every reply."""
     _amixer("PCM", f"{percent if percent is not None else 100}%")
     level = max(1, min(10, int(os.environ.get("VOICE_SPEAKER_LEVEL", "7"))))
-    _amixer("Voice", "--", f"{VOICE_LEVEL_DB[level]}dB")
+    # Set the softvol by raw step, not "-6dB": under HAOS the control carries no dB scale and amixer answers
+    # "Invalid command!", the level silently stays at 100% and a full-scale chime trips the Pi's USB power rail
+    # (measured 2026-10-26: -7 dBFS is fine, 0 dBFS drops the array off USB). Steps are 1 dB: 0 = -40 dB, 40 = 0 dB.
+    # Ceiling -3 dB (step 37) so the hardware trip can never be reached from a level setting.
+    step = min(VOICE_SOFTVOL_MAX_STEP, 40 + VOICE_LEVEL_DB[level])
+    if not _amixer("Voice", str(step)):
+        log.warning("Voice level not applied (amixer failed); output may be at full scale")
 
 
 def open_softvol(pcm: str) -> None:

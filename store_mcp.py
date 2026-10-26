@@ -122,5 +122,14 @@ def music(action: str = "status", station: str | None = None) -> str:
     return _daemon("/music", {"action": action, "station": station})
 
 
+@mcp.tool
+def timer(action: str = "status", minutes: float = 0, seconds: float = 0, hours: float = 0, label: str = "") -> str:
+    """Kitchen timer, shown counting down on the kitchen screen and rung on the speaker when it ends.
+    action: start (give minutes and/or seconds and/or hours, plus an optional short label such as pasta),
+    cancel, status. One timer at a time; starting another replaces it. Use for any "set a timer", "how long
+    is left", "cancel the timer"."""
+    return _daemon("/timer", {"action": action, "minutes": minutes, "seconds": seconds, "hours": hours, "label": label})
+
+
 if __name__ == "__main__":
     mcp.run(show_banner=False)

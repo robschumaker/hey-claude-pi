@@ -17,7 +17,8 @@ import time
 log = logging.getLogger("voice.music")
 ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]|\r")
 STATION = re.compile(r"^\s*(\d+)\)\s+(?:[qQS]\s+)?(.+?)\s*$")
-NOWPLAYING = re.compile(r'\|>\s+"(.+?)" by "(.+?)" on "(.+?)"')
+NOWPLAYING = re.compile(r'\|>\s+"(.+?)" by "(.+?)" on "(.+?)"\s*(\[LOVED\]|\[BANNED\]|\[TIRED\])?')
+SONGITEM = re.compile(r'^\s*(\d+)\)\s+"(.+?)" by "(.+?)"\s*(\[LOVED\]|\[BANNED\]|\[TIRED\])?\s*$')
 ONSTATION = re.compile(r"\|>\s+Station \"(.+?)\"")
 
 
@@ -39,6 +40,12 @@ class Pianobar:
         self.ducked = False             # paused by us for an exchange
         self.last_station: str | None = None
         self.level_pending = False
+        self.menu_items: list = []                   # numbered song list while a "Select song:" prompt is open
+        self.menu_prompt = threading.Event()         # the "Delete ... feedback?" question is open
+        self.song_prompt = threading.Event()         # the "Select song:" prompt is open
+        self.feedback_done = threading.Event()       # pianobar answered "Deleting feedback... Ok." (or an error)
+        self.loved_ok = threading.Event()            # pianobar answered "Loving song... Ok."
+        self.on_old_love = None                      # callback(title, artist): a loved song outside the newest 200 started
 
     # ---- process ------------------------------------------------------------------------
     def _config(self) -> None:
@@ -47,7 +54,8 @@ class Pianobar:
         cfg = os.path.join(d, "config")
         with open(cfg, "w") as f:
             f.write(f"user = {self.user}\npassword = {self.password}\naudio_quality = high\nvolume = {self.volume_db}\n"
-                    "format_nowplaying_song = |> \"%t\" by \"%a\" on \"%l\"\nformat_nowplaying_station = |> Station \"%n\"\n")
+                    "format_nowplaying_song = |> \"%t\" by \"%a\" on \"%l\"%r\nformat_nowplaying_station = |> Station \"%n\"\n"
+                    "love_icon = [LOVED]\nban_icon = [BANNED]\ntired_icon = [TIRED]\nformat_list_song = %i) \"%t\" by \"%a\"%r\n")
         os.chmod(cfg, 0o600)
 
     def _start(self) -> None:
@@ -74,9 +82,16 @@ class Pianobar:
                 i = min(j for j in (buf.find("\n"), buf.find("\r")) if j >= 0)
                 line, buf = buf[:i], buf[i + 1:]
                 self._line(ANSI.sub("", line).strip())
-            if "Select station" in ANSI.sub("", buf):
+            tail = ANSI.sub("", buf)
+            if "Select station" in tail:
                 self.stations_ready.set(); self.started.set()
                 buf = ""
+            elif "Select song" in tail:
+                self.song_prompt.set(); buf = ""
+            elif "eedback" in tail and "?" in tail:           # "[?] Delete [s]ong seeds or [f]eedback? Manage [m]ode? " (note the [f])
+                self.menu_prompt.set(); buf = ""
+            elif tail.strip() and len(tail) < 200:
+                log.info("pianobar prompt? %r", tail[-120:])
         self.playing = False
         log.info("pianobar exited")
 
@@ -84,20 +99,34 @@ class Pianobar:
         if True:
             if not line:
                 return
+            m = SONGITEM.match(line)
+            if m:
+                self.menu_items.append({"index": int(m.group(1)), "title": m.group(2), "artist": m.group(3),
+                                        "rating": (m.group(4) or "").strip("[]").lower()})
+                return
             m = STATION.match(line)
             if m:
                 i, name = int(m.group(1)), m.group(2)
                 if i == len(self.stations):
                     self.stations.append(name)
                 return
+            if "Loving song" in line and "Ok" in line:
+                self.song["loved"] = True; self.loved_ok.set(); return
+            if "Deleting feedback" in line:
+                if "Ok" in line:
+                    self.song["loved"] = False
+                self.feedback_done.set(); return
             if "Select station" in line:
                 self.stations_ready.set(); self.started.set()
                 return
             m = NOWPLAYING.search(line)
             if m:
-                self.song = {"title": m.group(1), "artist": m.group(2), "album": m.group(3), "station": self.last_station}
+                self.song = {"title": m.group(1), "artist": m.group(2), "album": m.group(3), "station": self.last_station,
+                             "loved": (m.group(4) or "") == "[LOVED]"}
+                if self.song["loved"] and self.on_old_love:
+                    threading.Thread(target=self._check_old_love, args=(m.group(1), m.group(2)), daemon=True).start()
                 self.playing = True; self.started.set()
-                log.info("pianobar: %s by %s", m.group(1), m.group(2))
+                log.info("pianobar: %s by %s%s", m.group(1), m.group(2), " " + m.group(4) if m.group(4) else "")
                 if self.level_pending:                       # pianobar has opened the device: the control exists now
                     self.level_pending = False
                     self._apply_level()
@@ -105,6 +134,11 @@ class Pianobar:
             m = ONSTATION.search(line)
             if m:
                 self.last_station = m.group(1)
+                return
+            if "Error" in line and ("playlist" in line or "Access denied" in line):
+                # Pandora refused to hand out songs (skip/rate limit, outage): nothing is playing, say so
+                self.playing = False; self.song = {}
+                log.warning("pianobar: Pandora refused the playlist (%s); music marked as stopped", line[:80])
                 return
             if "Error" in line or "Login" in line or "(i)" in line:
                 log.info("pianobar: %s", line[:120])
@@ -175,7 +209,85 @@ class Pianobar:
 
     def love(self) -> str:
         with self.lock:
-            self._send("+"); return "Thumbs up."
+            if self.song.get("loved"):
+                return self._unlove()
+            self._send("+"); self.song["loved"] = True; return "Thumbs up."
+
+    def unlove(self) -> str:
+        with self.lock:
+            return self._unlove()
+
+    def _unlove(self) -> str:
+        """Remove this song's thumbs-up: pianobar has no key for it, but its station menu ('=') can delete
+        feedback: answer 'f', then pick the song's number from the list it prints. Pandora returns only the
+        newest 200 thumbs, so an older one is loved again first (that makes it the newest) and then deleted.
+        Caller holds the lock."""
+        title = self.song.get("title")
+        if not self._alive() or not title:
+            return "Nothing is playing."
+        out = self._delete_feedback(title)
+        if out is None:                                   # not in the list: refresh it to the top, then delete
+            log.info("unlove: %r is older than the newest 200 thumbs; re-loving it to bring it into reach", title)
+            self.loved_ok = threading.Event()
+            self._send("+")
+            if not self.loved_ok.wait(timeout=15):
+                return "Pandora did not answer the thumbs-up."
+            out = self._delete_feedback(title)
+            if out is None:
+                return "Pandora did not list this song even after re-rating it; remove it in the Pandora app."
+        return out
+
+    def _list_feedback(self):
+        """Open the '=' menu and list the station's feedback; leaves the "Select song:" prompt open.
+        Returns None if pianobar did not play along (the prompt is closed again in that case)."""
+        self.menu_items, self.menu_prompt, self.song_prompt = [], threading.Event(), threading.Event()
+        self._send("=")
+        if not self.menu_prompt.wait(timeout=15):
+            return None
+        self._send("f")
+        if not self.song_prompt.wait(timeout=15):
+            self._send("\n"); return None
+        return list(self.menu_items)
+
+    def _check_old_love(self, title: str, artist: str) -> None:
+        """Background: a loved song started; see whether its thumbs-up is among the newest 200 the station
+        lists. If not, tell the owner (so the screen's removal path can be tried on it)."""
+        time.sleep(3)
+        with self.lock:
+            if self.song.get("title") != title:
+                return
+            items = self._list_feedback()
+            if items is None:
+                return
+            self._send("\n")                                      # just looking
+            norm = lambda t: " ".join((t or "").casefold().split())
+            found = any(norm(it["title"]) == norm(title) for it in items)
+            self.song["old_love"] = not found
+        if not found and self.on_old_love:
+            try:
+                self.on_old_love(title, artist)
+            except Exception as e:
+                log.warning("old-love notice failed: %s", e)
+
+    def _delete_feedback(self, title: str):
+        """One pass through the '=' menu. Returns a result string, or None if the song was not in the list."""
+        if self._list_feedback() is None:
+            return "Pandora did not list the feedback."
+        norm = lambda t: " ".join((t or "").casefold().split())
+        artist = self.song.get("artist")
+        hits = [it for it in self.menu_items if norm(it["title"]) == norm(title) and norm(it["artist"]) == norm(artist)] \
+            or [it for it in self.menu_items if norm(it["title"]) == norm(title)]
+        if not hits:
+            import difflib
+            near = difflib.get_close_matches(title, [it["title"] for it in self.menu_items], n=3, cutoff=0.5)
+            log.warning("unlove: %r not in the %d feedback items; closest %r", title, len(self.menu_items), near)
+            self._send("\n")
+            return None
+        self.feedback_done = threading.Event()
+        self._send(f"{hits[0]['index']}\n")
+        if not self.feedback_done.wait(timeout=15):
+            return "Pandora did not confirm removing the thumbs-up."
+        return "Thumbs up removed." if not self.song.get("loved") else "Pandora refused to remove the thumbs-up."
 
     def ban(self) -> str:
         with self.lock:
@@ -200,8 +312,13 @@ class Pianobar:
         """Instant and clean: an ALSA softvol ("Music") on the shared mixer, not pianobar's keystroke gain."""
         import subprocess
         try:
-            subprocess.run(["amixer", "-q", "-D", "hw:Array", "sset", self.CONTROL, "--", f"{self.LEVEL_DB[self.level]}dB"],
-                           timeout=5, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            # Raw step, not dB (amixer under HAOS rejects the dB form for this softvol): 0 = -40 dB, 40 = 0 dB, 46 = +6 dB.
+            # Ceiling 0 dB (step 40): above that the USB-powered amplifier trips the Pi's USB rail (measured 2026-10-26).
+            step = min(40, 40 + self.LEVEL_DB[self.level])
+            r = subprocess.run(["amixer", "-q", "-D", "hw:Array", "sset", self.CONTROL, str(step)],
+                               timeout=5, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if r.returncode != 0:
+                log.warning("music level not applied (amixer rc %s)", r.returncode)
         except Exception as e:
             log.warning("music level: %s", e)
 
@@ -209,7 +326,7 @@ class Pianobar:
         """For the kitchen screen."""
         return {"on": self._alive(), "playing": self.playing, "level": self.level, "stations": list(self.stations),
                 "title": self.song.get("title"), "artist": self.song.get("artist"), "album": self.song.get("album"),
-                "station": self.song.get("station") or self.last_station}
+                "station": self.song.get("station") or self.last_station, "loved": bool(self.song.get("loved"))}
 
     def status(self) -> str:
         if not self._alive():
@@ -248,7 +365,7 @@ class Pianobar:
         action = (action or "status").strip().lower()
         table = {"play": lambda: self.play(station), "resume": lambda: self.play(None) if self._alive() else self.play(station),
                  "pause": self.pause, "stop": self.stop, "next": self.next, "skip": self.next, "love": self.love,
-                 "like": self.love, "ban": self.ban, "dislike": self.ban, "status": self.status, "stations": self.list_stations,
+                 "like": self.love, "unlove": self.unlove, "unlike": self.unlove, "ban": self.ban, "dislike": self.ban, "status": self.status, "stations": self.list_stations,
                  "volume": lambda: self.volume(station)}
         if action not in table:
             return "Unknown music action " + action + "."

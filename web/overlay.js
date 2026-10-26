@@ -15,6 +15,12 @@
     "@keyframes claude-talk{0%,100%{filter:drop-shadow(0 0 16px rgba(217,119,87,.45))}50%{filter:drop-shadow(0 0 48px rgba(217,119,87,1))}}" +
     "@keyframes claude-breathe{0%,100%{transform:scale(1)}50%{transform:scale(1.18)}}" +
     "@keyframes claude-spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}" +
+    "#claude-timer{position:fixed;left:50%;top:6vh;transform:translateX(-50%);display:none;flex-direction:column;align-items:center;" +
+    "padding:2vh 5vw;border-radius:24px;background:rgba(0,0,0,.78);color:#f3ede8;z-index:2147483646;font-family:system-ui,sans-serif;touch-action:manipulation}" +
+    "#claude-timer.on{display:flex}#claude-timer b{font-size:22vh;line-height:1;font-variant-numeric:tabular-nums;letter-spacing:.02em}" +
+    "#claude-timer span{font-size:4vh;opacity:.8;margin-top:1vh}" +
+    "#claude-timer.ringing{background:rgba(217,119,87,.92);animation:claude-ring .5s steps(2) infinite}" +
+    "@keyframes claude-ring{50%{background:rgba(0,0,0,.85)}}" +
     "#claude-music{position:fixed;left:0;right:0;bottom:0;display:none;align-items:center;gap:14px;padding:10px 16px;" +
     "background:rgba(20,16,14,.92);color:#f3ede8;font:500 17px/1.25 system-ui,sans-serif;z-index:2147483646;" +
     "box-shadow:0 -6px 24px rgba(0,0,0,.5)}" +
@@ -25,6 +31,7 @@
     "#claude-music button{width:58px;height:58px;border:0;border-radius:50%;background:rgba(255,255,255,.1);color:#f3ede8;" +
     "font-size:26px;line-height:58px;padding:0;touch-action:manipulation;cursor:pointer;display:inline-flex;align-items:center;justify-content:center}" +
     "#claude-music button svg{display:block}" +
+    "#claude-music button.lit{color:#d97757}#claude-music button.lit svg{fill:#d97757}" +
     "#claude-music button:active{background:rgba(217,119,87,.8)}" +
     "#claude-music .lvl{font-variant-numeric:tabular-nums;opacity:.7;font-size:15px;min-width:34px;text-align:center}" +
     "#claude-music .np{cursor:pointer}" +
@@ -45,14 +52,27 @@
   var bar = document.createElement("div");
   bar.id = "claude-music";
   bar.innerHTML = '<div class="np"><b></b><span></span></div>' +
-    '<button data-a="toggle" title="Play / pause"><svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor"><path d="M5 4h5v16H5V4zm9 0h5v16h-5V4z"/></svg></button>' +
-    '<button data-a="next" title="Skip"><svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor"><path d="M5 4l10 8-10 8V4zm12 0h3v16h-3V4z"/></svg></button>' +
-    '<button data-a="love" title="Thumbs up"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M7 11v9H3v-9h4zm2 0l4-8c1.7 0 2.5 1.2 2.5 2.5V9H20a2 2 0 0 1 2 2l-1.5 7.5a2 2 0 0 1-2 1.5H9v-9z"/></svg></button>' +
-    '<button data-a="ban" title="Thumbs down"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M17 13V4h4v9h-4zm-2 0l-4 8c-1.7 0-2.5-1.2-2.5-2.5V15H4a2 2 0 0 1-2-2l1.5-7.5A2 2 0 0 1 5.5 4H15v9z"/></svg></button>' +
-    '<button data-a="vol-" title="Quieter">&minus;</button><div class="lvl"></div><button data-a="vol+" title="Louder">+</button>' +
-    '<button data-a="stop" title="Off">&#10005;</button>';
+    '<button data-a="toggle"><svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor"><path d="M5 4h5v16H5V4zm9 0h5v16h-5V4z"/></svg></button>' +
+    '<button data-a="next"><svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor"><path d="M5 4l10 8-10 8V4zm12 0h3v16h-3V4z"/></svg></button>' +
+    '<button data-a="love"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M7 11v9H3v-9h4zm2 0l4-8c1.7 0 2.5 1.2 2.5 2.5V9H20a2 2 0 0 1 2 2l-1.5 7.5a2 2 0 0 1-2 1.5H9v-9z"/></svg></button>' +
+    '<button data-a="ban"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M17 13V4h4v9h-4zm-2 0l-4 8c-1.7 0-2.5-1.2-2.5-2.5V15H4a2 2 0 0 1-2-2l1.5-7.5A2 2 0 0 1 5.5 4H15v9z"/></svg></button>' +
+    '<button data-a="vol-">&minus;</button><div class="lvl"></div><button data-a="vol+">+</button>' +
+    '<button data-a="stop">&#10005;</button>';
   document.body.appendChild(bar);
   var music = null;
+  var timerBox = document.createElement("div");
+  timerBox.id = "claude-timer"; timerBox.innerHTML = "<b></b><span></span>";
+  timerBox.addEventListener("click", function () {
+    fetch(base + "/timer", {method: "POST", headers: {"Content-Type": "text/plain"}, body: JSON.stringify({action: "stop"})}).catch(function () {});
+  });
+  document.body.appendChild(timerBox);
+  function showTimer(t) {
+    if (!t || !t.active) { timerBox.className = ""; return; }
+    var r = t.remaining, h = Math.floor(r / 3600), m = Math.floor((r % 3600) / 60), s = r % 60;
+    timerBox.querySelector("b").textContent = t.ringing ? "0:00" : (h ? h + ":" + String(m).padStart(2, "0") : m) + ":" + String(s).padStart(2, "0");
+    timerBox.querySelector("span").textContent = t.ringing ? "Time's up  \u00b7  tap or say stop" : (t.label || "timer");
+    timerBox.className = t.ringing ? "on ringing" : "on";
+  }
   var picker = document.createElement("div");
   picker.id = "claude-stations";
   document.body.appendChild(picker);
@@ -77,6 +97,7 @@
     var b = e.target.closest("button"); if (!b || !music) return;
     var a = b.getAttribute("data-a");
     if (a === "toggle") send(music.playing ? "pause" : "play");
+    else if (a === "love") { music.loved = !music.loved; showMusic(music); send(music.loved ? "love" : "unlove"); }
     else if (a === "vol+" || a === "vol-") {
       music.level = Math.max(1, Math.min(10, (music.level || 8) + (a === "vol+" ? 1 : -1)));
       bar.querySelector(".lvl").textContent = music.level;          // show it now, confirm on the next tick
@@ -93,6 +114,7 @@
     bar.querySelector(".np span").textContent = (m.station || "") + (m.playing ? "" : "  \u00b7  paused");
     bar.querySelector('[data-a="toggle"]').innerHTML = m.playing ? '<svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor"><path d="M5 4h5v16H5V4zm9 0h5v16h-5V4z"/></svg>' : '<svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor"><path d="M6 4l14 8-14 8V4z"/></svg>';
     bar.querySelector(".lvl").textContent = m.level || "";
+    bar.querySelector('[data-a="love"]').className = m.loved ? "lit" : "";
   }
   var last = "";
   function tick() {
@@ -102,6 +124,7 @@
         box.className = s.state === "idle" ? "" : "on " + s.state;
       }
       showMusic(s.music);
+      showTimer(s.timers);
     }).catch(function () { if (last !== "idle") { last = "idle"; box.className = ""; } showMusic(null); });
   }
   setInterval(tick, 200);
